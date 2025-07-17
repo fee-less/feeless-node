@@ -4,6 +4,14 @@ import P2PNetwork from "./p2pnet.js";
 import express from "express";
 import { config } from "dotenv";
 import cors from "cors";
+import fs from "fs";
+if (!fs.existsSync(".env")) fs.writeFileSync(".env",
+  `PEER=
+PEER_HTTP=
+PORT=6061
+HTTP_PORT=8000`
+);
+
 config();
 
 const app = express();
@@ -31,6 +39,13 @@ app.use(cors());
     }
   ];
 
+  if (fs.existsSync("blockchain")) {
+    blocks = [];
+    for (const block of fs.readdirSync("blockchain")) {
+      blocks.push(JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8")));
+    }
+  }
+
   if (process.env.PEER_HTTP !== "") {
     console.log("");
     const height = (await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height;
@@ -40,7 +55,7 @@ app.use(cors());
 
     for (let i = 0; i < height; i++) {
       const block = await fetch(process.env.PEER_HTTP + "/block/" + i).then(res => res.json());
-      blocks[i] = block;  // Replace at correct index instead of pushing
+      blocks[i] = block;
 
       // Progress bar calculation
       const progress = (i + 1) / height;
@@ -304,6 +319,6 @@ app.use(cors());
       console.log("[ERROR]", e);
     }
   });
-
+  console.log("Ready.");
   app.listen(parseInt(process.env.HTTP_PORT ?? "8000"));
 })();

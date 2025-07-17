@@ -10,3 +10,6 @@ yarn.lock
 .idea/
 
 dist/
+miner.json
+.env
+blockchain/

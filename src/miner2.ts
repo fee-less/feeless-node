@@ -1,6 +1,40 @@
 import { Block, calculateReward, DEV_FEE, DEV_WALLET, FeelessClient, FLSStoFPoints, hashArgon, Transaction } from "feeless-utils";
+import fs from "fs";
 
-const fc = new FeelessClient("ws://localhost:6061", "http://localhost:8000", "1aa37a7e1a3a3c10302c6643f48a37c4d9e19e2432850443dd3b33f12dfecc89a4");
+// Define config file path
+const CONFIG_PATH = "miner.json";
+
+// Default config values
+const defaultConfig = {
+  wsUrl: "ws://localhost:6061",
+  httpUrl: "http://localhost:8000",
+  private: "PRIVATE_WALLET_KEY",
+  token: "",
+};
+
+// Function to load or create config file
+function loadConfig() {
+  if (!fs.existsSync(CONFIG_PATH)) {
+    // Create config file if missing
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaultConfig, null, 2));
+    console.log(`Config file created at ${CONFIG_PATH}`);
+    return defaultConfig;
+  } else {
+    // Read and parse config file
+    const raw = fs.readFileSync(CONFIG_PATH, "utf8");
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error("Error parsing config file, using default config.");
+      return defaultConfig;
+    }
+  }
+}
+
+const config = loadConfig();
+
+// Now create your FeelessClient with the loaded config
+const fc = new FeelessClient(config.wsUrl, config.httpUrl, config.private);
 await fc.init();
 
 let mempool: Transaction[] = await fc.getMempool();
@@ -34,12 +68,11 @@ const miningLoop = async () => {
     }, {
       sender: 'network',
       receiver: fc.getPublic(),
-      amount: FLSStoFPoints(reward * (1 - DEV_FEE)),
-      // amount: 1000,
+      amount: !config.token ? FLSStoFPoints(reward * (1 - DEV_FEE)) : (await fc.getTokenInfo(config.token)).miningReward,
       signature: '',
       nonce: Math.floor(Math.random() * 1e6),
       timestamp: Date.now(),
-      // token: "PEPE"
+      token: config.token ? config.token : undefined
     }],
     prev_hash: prevHash,
     nonce,

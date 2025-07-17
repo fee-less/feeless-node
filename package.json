@@ -11,8 +11,8 @@
     "client": "node dist/client.js"
   },
   "bin": {
-    "feeless-node": "node bootstrap.js",
-    "feeless-miner": "node minerBootstrap.js"
+    "feeless-node": "./bootstrap.js",
+    "feeless-miner": "./minerBootstrap.js"
   },
   "keywords": [],
   "author": "",
@@ -27,7 +27,7 @@
     "dotenv": "^16.5.0",
     "elliptic": "^6.6.1",
     "express": "^5.1.0",
-    "feeless-utils": "^1.0.0",
+    "feeless-utils": "^2.0.0",
     "ws": "^8.18.2"
   },
   "devDependencies": {

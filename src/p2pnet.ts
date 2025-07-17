@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Block, getDiff, Transaction, EventPayload } from 'feeless-utils';
 import Blockchain from './blockchain.js';
+import fs from "fs";
 
 class P2PNetwork {
   public bc: Blockchain;
@@ -63,7 +64,14 @@ class P2PNetwork {
       console.log("Block has invalid diff!");
       return false;
     }
-    return await this.bc.addBlock(block);
+    const res = await this.bc.addBlock(block);
+    if (res) {
+      if (!fs.existsSync("blockchain")) {
+        fs.mkdirSync("blockchain");
+      }
+      fs.writeFileSync("blockchain/" +(this.bc.blocks.length - 1), JSON.stringify(this.bc.blocks[this.bc.blocks.length - 1]));
+    }
+    return res
   }
 }
 
