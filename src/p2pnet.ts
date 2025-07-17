@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Block, getDiff, Transaction, EventPayload } from 'feeless-utils';
 import Blockchain from './blockchain.js';
 import fs from "fs";
+import { onBlock, onMint, onTX } from './webhooks.js';
 
 class P2PNetwork {
   public bc: Blockchain;
@@ -55,7 +56,11 @@ class P2PNetwork {
   incomingTX(tx: Transaction) {
     if (tx.timestamp < Date.now() - 60000) return false;
     if (this.bc.mempool.filter((pendingTx: Transaction) => tx.sender === pendingTx.sender).length > 0) return false;
-    return this.bc.pushTX(tx);
+    const res = this.bc.pushTX(tx);
+    if (res) {
+      onTX(tx);
+    }
+    return res;
   }
 
   async incomingBlock(block: Block) {
@@ -70,8 +75,14 @@ class P2PNetwork {
         fs.mkdirSync("blockchain");
       }
       fs.writeFileSync("blockchain/" +(this.bc.blocks.length - 1), JSON.stringify(this.bc.blocks[this.bc.blocks.length - 1]));
+      onBlock(block);
+      for (const tx of block.transactions) {
+        if (tx.mint && tx.token) {
+          onMint(tx.mint, tx.token);
+        }
+      }
     }
-    return res
+    return res;
   }
 }
 

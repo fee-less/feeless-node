@@ -96,7 +96,8 @@ class Blockchain {
       }
       this.mempool.push(tx);
       return true;
-    } return false;
+    }
+    return false;
   }
 
   checkTX(tx: Transaction, ignoreMempoolBalance = true, isBlockValidation = false) {

@@ -20,12 +20,12 @@ app.use(cors());
 (async () => {
   let blocks = [
     {
-      timestamp: 0,
+      timestamp: Date.now(),
       transactions: [
         {
           sender: "network",
           receiver: "0217821bc151c94d80290bd4610e283aa4ba1fb411bb8d40d1072fd0ace5a6b9a3",
-          amount: FLSStoFPoints(10000),
+          amount: FLSStoFPoints(5000000),
           signature: "network",
           nonce: 0,
           timestamp: Date.now()
@@ -48,14 +48,17 @@ app.use(cors());
 
   if (process.env.PEER_HTTP !== "") {
     console.log("");
+    const myHeight = blocks.length;
     const height = (await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height;
-    console.log("Syncing " + height + " blocks...");
+    console.log("Syncing " + (height - myHeight) + " blocks...");
 
     const totalWidth = process.stdout.columns - 7 || 50;
 
-    for (let i = 0; i < height; i++) {
+    for (let i = myHeight; i < height; i++) {
       const block = await fetch(process.env.PEER_HTTP + "/block/" + i).then(res => res.json());
       blocks[i] = block;
+      if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
+      fs.writeFileSync("blockchain/" + i, JSON.stringify(block));
 
       // Progress bar calculation
       const progress = (i + 1) / height;
@@ -66,6 +69,7 @@ app.use(cors());
       // Print bar with carriage return
       process.stdout.write(`\r[${bar}] ${Math.floor(progress * 100)}%`);
     }
+    if ((await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height != blocks.length) throw Error("Desynced. Please rerun feeless-node.");
 
     // Final newline after loading bar completes
     console.log("\nDone syncing blocks.");

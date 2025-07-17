@@ -13,6 +13,7 @@ Run the following command globally:
 ```bash
 npm install -g feeless-node
 ```
+(...you may need to run this command with sudo...)
 
 This gives you access to two CLI tools:
 
