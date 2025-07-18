@@ -78,6 +78,16 @@ app.use(cors());
   }  
 
   const bc = new Blockchain(blocks);
+  bc.onSynced = async () => {
+    console.log("Syncing mempool...")
+    const mempoolTxs: Transaction[] = await fetch(
+      process.env.PEER_HTTP + "/mempool"
+    ).then((res) => res.json());
+
+    for (const tx of mempoolTxs) {
+      bc.pushTX(tx); // will validate + add to local mempool
+    }
+  }
 
   new P2PNetwork(process.env.PEER ?? "", parseInt(process.env.PORT ?? "6061"), bc);
 

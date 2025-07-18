@@ -10,7 +10,8 @@ class Blockchain {
   public blocks: Block[] = [];
   public mempool: Transaction[] = [];
   public mintedTokens: MintedTokens = new Map(); // Track minted tokens and their mining rules
-  private usedSignatures: string[] = []
+  public onSynced: () => void = () => {};
+  private usedSignatures: string[] = [];
   private lastNonces: Map<string, number> = new Map(); // Track last nonce for each address
   private readonly MAX_USED_SIGNATURES = 100000; // Keep last 100k signatures
 
@@ -19,37 +20,28 @@ class Blockchain {
       // Initialize mintedTokens and lastNonces from existing blocks
       let genesis = true;
       for (const block of blocks) {
-        if (!genesis) {
-          if (!await this.checkBlock(block, true)) {
-            console.log("!!!WARNING!!! A Synced Block is INVALID. Someone might be trying to tamper with your node. Consider switching to a diffrent node.");
-            return;
-          }
+        if (genesis) {
+          this.blocks.push(block);
+          genesis = false;
+          continue;
         }
-        genesis = false;
-        this.blocks.push(block);
-        for (const tx of block.transactions) {
-          if (tx.mint && tx.receiver === DEV_WALLET) {
-            const expectedFee = calculateMintFee(blocks.slice(0, blocks.indexOf(block)).length, this.mintedTokens.size);
-            if (tx.amount === expectedFee) {
-              this.mintedTokens.set(tx.mint.token, {
-                miningReward: tx.mint.miningReward || 0,
-                airdrop: tx.mint.airdrop
-              });
-            }
-          }
-          // Track last nonce for each address
-          if (tx.sender !== "network") {
-            const currentNonce = this.lastNonces.get(tx.sender) || 0;
-            if (tx.nonce > currentNonce) {
-              this.lastNonces.set(tx.sender, tx.nonce);
-            }
-          }
+        this.mempool.push(...block.transactions)
+        if (!(await this.addBlock(block, true))) {
+          console.log(
+            "[WARNING] SOMEONE MIGHT BE TAMPERING WITH YOUR NODE. The node you are syncing from has sent you a bad block. consider changing it for a diffrent one.", block
+          );
+          return;
         }
       }
+      this.onSynced();
     })();
   }
 
-  calculateBalance(addr: string, includeMempool = false, token: undefined | string = undefined) {
+  calculateBalance(
+    addr: string,
+    includeMempool = false,
+    token: undefined | string = undefined
+  ) {
     let bal = 0;
     // First check mempool if includeMempool is true to prevent double spending
     if (includeMempool) {
@@ -99,7 +91,7 @@ class Blockchain {
             signature: "mint",
             nonce: Math.round(Math.random() * 1e6),
             timestamp: Date.now(),
-            token: tx.mint.token
+            token: tx.mint.token,
           };
           this.mempool.push(airdropTx);
         }
@@ -110,7 +102,11 @@ class Blockchain {
     return false;
   }
 
-  checkTX(tx: Transaction, ignoreMempoolBalance = true, isBlockValidation = false) {
+  checkTX(
+    tx: Transaction,
+    ignoreMempoolBalance = true,
+    isBlockValidation = false
+  ) {
     if (!Number.isInteger(tx.amount) || tx.amount <= 0) {
       console.log("Invalid transaction amount.");
       return false;
@@ -123,14 +119,20 @@ class Blockchain {
         // This is a native FLSS reward or dev fee transaction
         if (tx.receiver === DEV_WALLET) {
           // Dev fee transaction
-          if (tx.amount !== FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)) {
+          if (
+            tx.amount !==
+            FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)
+          ) {
             console.log("Invalid dev fee amount");
             return false;
           }
           return true;
         } else {
           // Mining reward transaction
-          if (tx.amount !== FLSStoFPoints(calculateReward(this.blocks.length) * (1 - DEV_FEE))) {
+          if (
+            tx.amount !==
+            FLSStoFPoints(calculateReward(this.blocks.length) * (1 - DEV_FEE))
+          ) {
             console.log("Invalid mining reward amount");
             return false;
           }
@@ -147,8 +149,13 @@ class Blockchain {
       if (!tokenInfo) {
         // Check if token is being minted in mempool
         for (const pendingTx of this.mempool) {
-          if (pendingTx.mint && pendingTx.receiver === DEV_WALLET && 
-            pendingTx.amount === calculateMintFee(this.blocks.length, this.mintedTokens.size) && pendingTx.mint.token === tx.token) {
+          if (
+            pendingTx.mint &&
+            pendingTx.receiver === DEV_WALLET &&
+            pendingTx.amount ===
+              calculateMintFee(this.blocks.length, this.mintedTokens.size) &&
+            pendingTx.mint.token === tx.token
+          ) {
             // Found pending mint, validate airdrop amount
             if (tx.amount !== pendingTx.mint.airdrop) {
               console.log("Invalid airdrop amount");
@@ -157,8 +164,12 @@ class Blockchain {
             // Check if airdrop was already claimed in previous blocks
             for (const block of this.blocks) {
               for (const btx of block.transactions) {
-                if (btx.sender === "mint" && btx.signature === "mint" && 
-                    btx.token === tx.token && btx.amount === pendingTx.mint.airdrop) {
+                if (
+                  btx.sender === "mint" &&
+                  btx.signature === "mint" &&
+                  btx.token === tx.token &&
+                  btx.amount === pendingTx.mint.airdrop
+                ) {
                   console.log("Airdrop was already claimed");
                   return false;
                 }
@@ -180,8 +191,12 @@ class Blockchain {
       // Check if airdrop was already claimed in previous blocks
       for (const block of this.blocks) {
         for (const btx of block.transactions) {
-          if (btx.sender === "mint" && btx.signature === "mint" && 
-              btx.token === tx.token && btx.amount === tokenInfo.airdrop) {
+          if (
+            btx.sender === "mint" &&
+            btx.signature === "mint" &&
+            btx.token === tx.token &&
+            btx.amount === tokenInfo.airdrop
+          ) {
             console.log("Airdrop was already claimed");
             return false;
           }
@@ -193,9 +208,14 @@ class Blockchain {
 
     // Handle minting transaction
     if (tx.mint) {
-      const expectedFee = calculateMintFee(this.blocks.length, this.mintedTokens.size);
+      const expectedFee = calculateMintFee(
+        this.blocks.length,
+        this.mintedTokens.size
+      );
       if (tx.receiver !== DEV_WALLET || tx.amount !== expectedFee) {
-        console.log(`Invalid minting transaction - must be sent to ${DEV_WALLET} with fee ${expectedFee}, got: ${tx.amount} ${tx.receiver}`);
+        console.log(
+          `Invalid minting transaction - must be sent to ${DEV_WALLET} with fee ${expectedFee}, got: ${tx.amount} ${tx.receiver}`
+        );
         return false;
       }
 
@@ -234,14 +254,19 @@ class Blockchain {
         // Check if token is being minted in current mempool
         for (const pendingTx of this.mempool) {
           if (pendingTx.mint && pendingTx.mint.token === token) {
-            console.log("Token " + token + " is already being minted in mempool!");
+            console.log(
+              "Token " + token + " is already being minted in mempool!"
+            );
             return false;
           }
         }
       }
 
       // Validate mining reward if specified
-      if (tx.mint.miningReward !== undefined && (!Number.isInteger(tx.mint.miningReward) || tx.mint.miningReward <= 0)) {
+      if (
+        tx.mint.miningReward !== undefined &&
+        (!Number.isInteger(tx.mint.miningReward) || tx.mint.miningReward <= 0)
+      ) {
         console.log("Invalid mining reward amount");
         return false;
       }
@@ -260,16 +285,26 @@ class Blockchain {
       // Add nonce validation
       const lastNonce = this.lastNonces.get(tx.sender) || 0;
       if (tx.nonce <= lastNonce) {
-        console.log("Invalid transaction nonce - must be greater than last used nonce");
+        console.log(
+          "Invalid transaction nonce - must be greater than last used nonce"
+        );
         return false;
       }
 
       const key = ec.keyFromPublic(tx.sender, "hex");
-      if (!key.verify(SHA256(JSON.stringify({ ...tx, signature: "" })).toString(), tx.signature)) {
+      if (
+        !key.verify(
+          SHA256(JSON.stringify({ ...tx, signature: "" })).toString(),
+          tx.signature
+        )
+      ) {
         console.log("Invalid transaction signature.");
         return false;
       }
-      if (this.calculateBalance(tx.sender, ignoreMempoolBalance, tx.token) < tx.amount) {
+      if (
+        this.calculateBalance(tx.sender, ignoreMempoolBalance, tx.token) <
+        tx.amount
+      ) {
         console.log("Insufficient balance.");
         return false;
       }
@@ -281,20 +316,30 @@ class Blockchain {
     return true;
   }
 
-  private validateBlockRewards(block: Block): { isValid: boolean, hasDevFee: boolean, hasReward: boolean } {
+  private validateBlockRewards(block: Block): {
+    isValid: boolean;
+    hasDevFee: boolean;
+    hasReward: boolean;
+  } {
     let hasDevFee = false;
     let hasReward = false;
     let tokenRewardTx = false;
-    const pendingMints = new Map<string, { miningReward: number, airdrop: number }>();
+    const pendingMints = new Map<
+      string,
+      { miningReward: number; airdrop: number }
+    >();
 
     // First pass: collect all mint transactions in this block
     for (const tx of block.transactions) {
       if (tx.mint && tx.receiver === DEV_WALLET) {
-        const expectedFee = calculateMintFee(this.blocks.length, this.mintedTokens.size);
+        const expectedFee = calculateMintFee(
+          this.blocks.length,
+          this.mintedTokens.size
+        );
         if (tx.amount === expectedFee) {
           pendingMints.set(tx.mint.token, {
             miningReward: tx.mint.miningReward || 0,
-            airdrop: tx.mint.airdrop
+            airdrop: tx.mint.airdrop,
           });
         }
       }
@@ -304,7 +349,10 @@ class Blockchain {
     for (const tx of block.transactions) {
       // Validate dev fee transaction
       if (tx.sender === "network" && tx.receiver === DEV_WALLET && !tx.token) {
-        if (tx.amount !== FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)) {
+        if (
+          tx.amount !==
+          FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)
+        ) {
           console.log(`Invalid dev fee amount: ${tx.amount}`);
           return { isValid: false, hasDevFee, hasReward };
         }
@@ -321,7 +369,8 @@ class Blockchain {
 
         if (tx.token) {
           // Token reward validation - check both existing and pending mints
-          const tokenInfo = this.mintedTokens.get(tx.token) || pendingMints.get(tx.token);
+          const tokenInfo =
+            this.mintedTokens.get(tx.token) || pendingMints.get(tx.token);
           if (!tokenInfo) {
             console.log("Reward TX token doesn't exist!");
             return { isValid: false, hasDevFee, hasReward };
@@ -336,7 +385,10 @@ class Blockchain {
           }
         } else {
           // FLSS reward validation
-          if (tx.amount !== FLSStoFPoints(calculateReward(this.blocks.length) * (1 - DEV_FEE))) {
+          if (
+            tx.amount !==
+            FLSStoFPoints(calculateReward(this.blocks.length) * (1 - DEV_FEE))
+          ) {
             console.log(`Invalid FLSS reward amount: ${tx.amount}`);
             return { isValid: false, hasDevFee, hasReward };
           }
@@ -349,7 +401,8 @@ class Blockchain {
       // Validate airdrop transaction
       if (tx.sender === "mint" && tx.token) {
         // Check both existing and pending mints
-        const tokenInfo = this.mintedTokens.get(tx.token) || pendingMints.get(tx.token);
+        const tokenInfo =
+          this.mintedTokens.get(tx.token) || pendingMints.get(tx.token);
         if (!tokenInfo) {
           console.log("Airdrop for non-existent token");
           return { isValid: false, hasDevFee, hasReward };
@@ -361,8 +414,12 @@ class Blockchain {
         // Check if airdrop was already claimed in previous blocks
         for (const b of this.blocks) {
           for (const btx of b.transactions) {
-            if (btx.sender === "mint" && btx.signature === "mint" && 
-                btx.token === tx.token && btx.amount === tokenInfo.airdrop) {
+            if (
+              btx.sender === "mint" &&
+              btx.signature === "mint" &&
+              btx.token === tx.token &&
+              btx.amount === tokenInfo.airdrop
+            ) {
               console.log("Airdrop was already claimed");
               return { isValid: false, hasDevFee, hasReward };
             }
@@ -371,8 +428,12 @@ class Blockchain {
         // Check if airdrop was already claimed in this block (before this tx)
         for (const btx of block.transactions) {
           if (btx === tx) break; // Stop when we reach current tx
-          if (btx.sender === "mint" && btx.signature === "mint" && 
-              btx.token === tx.token && btx.amount === tokenInfo.airdrop) {
+          if (
+            btx.sender === "mint" &&
+            btx.signature === "mint" &&
+            btx.token === tx.token &&
+            btx.amount === tokenInfo.airdrop
+          ) {
             console.log("Airdrop was already claimed in this block");
             return { isValid: false, hasDevFee, hasReward };
           }
@@ -384,7 +445,7 @@ class Blockchain {
     return { isValid: true, hasDevFee, hasReward };
   }
 
-  async checkBlock(block: Block, ignoreTimestamps = false) {
+  async checkBlock(block: Block, isBackchecking = false) {
     let length = 0;
     for (const tx of this.mempool) {
       if (tx.timestamp <= block.timestamp) length++;
@@ -395,30 +456,54 @@ class Blockchain {
       console.log("Block timestamp is in the future!");
       return false;
     }
-    if (!ignoreTimestamps && block.timestamp < Date.now() - BLOCK_TIME) {
+    if (!isBackchecking && block.timestamp < Date.now() - BLOCK_TIME) {
       console.log("Too old block!");
       return false;
     }
 
     if (block.transactions.length < 0.75 * length) {
-      console.log(`Block has not enough transactions, got ${block.transactions.length}, expected at least ${0.75 * this.mempool.length}`);
+      console.log(
+        `Block has not enough transactions, got ${
+          block.transactions.length
+        }, expected at least ${0.75 * this.mempool.length}`
+      );
       return false;
     }
 
     // Check if the provided hash matches the calculated hash of the block
-    if ((await hashArgon(JSON.stringify({ ...block, hash: '', signature: '' }))).toString(16) !== block.hash) {
-      console.log(`Block hash is invalid. Calculated: ${(await hashArgon(JSON.stringify({ ...block, hash: '', signature: '' }))).toString(16) }, Expected: ${block.hash}`);
+    if (
+      (
+        await hashArgon(JSON.stringify({ ...block, hash: "", signature: "" }))
+      ).toString(16) !== block.hash
+    ) {
+      console.log(
+        `Block hash is invalid. Calculated: ${(
+          await hashArgon(JSON.stringify({ ...block, hash: "", signature: "" }))
+        ).toString(16)}, Expected: ${block.hash}`
+      );
       return false;
     }
 
     // Check if the previous hash in the current block matches the hash of the previous block
-    if (this.blocks.length > 0 && block.prev_hash !== this.blocks[this.blocks.length - 1].hash) {
+    if (
+      this.blocks.length > 0 &&
+      block.prev_hash !== this.blocks[this.blocks.length - 1].hash
+    ) {
       console.log("Previous block hash is invalid.");
       return false;
     }
 
-    899998;// Check if the provided signature is valid
-    if (!ec.keyFromPublic(block.proposer, "hex").verify(SHA256(JSON.stringify({ ...block, hash: '', signature: '' })).toString(), block.signature)) {
+    // Check if the provided signature is valid
+    if (
+      !ec
+        .keyFromPublic(block.proposer, "hex")
+        .verify(
+          SHA256(
+            JSON.stringify({ ...block, hash: "", signature: "" })
+          ).toString(),
+          block.signature
+        )
+    ) {
       console.log("Invalid block signature!");
       return false;
     }
@@ -441,14 +526,26 @@ class Blockchain {
     for (const tx of block.transactions) {
       let inTxs = false;
       for (const pendingTx of this.mempool) {
-        if (pendingTx.signature === tx.signature && pendingTx.amount === tx.amount && 
-            pendingTx.nonce === tx.nonce && pendingTx.receiver === tx.receiver && 
-            pendingTx.sender === tx.sender && pendingTx.token === tx.token) {
+        if (
+          pendingTx.signature === tx.signature &&
+          pendingTx.amount === tx.amount &&
+          pendingTx.nonce === tx.nonce &&
+          pendingTx.receiver === tx.receiver &&
+          pendingTx.sender === tx.sender &&
+          pendingTx.token === tx.token
+        ) {
           inTxs = true;
           // If this is a mint transaction, verify it's not already minted
-          if (pendingTx.mint && pendingTx.receiver === DEV_WALLET && pendingTx.amount === calculateMintFee(this.blocks.length, this.mintedTokens.size)) {
+          if (
+            pendingTx.mint &&
+            pendingTx.receiver === DEV_WALLET &&
+            pendingTx.amount ===
+              calculateMintFee(this.blocks.length, this.mintedTokens.size)
+          ) {
             if (this.mintedTokens.has(pendingTx.mint.token)) {
-              console.log("Token " + pendingTx.mint.token + " has already been minted!");
+              console.log(
+                "Token " + pendingTx.mint.token + " has already been minted!"
+              );
               return false;
             }
           }
@@ -469,38 +566,47 @@ class Blockchain {
     return true;
   }
 
-  async addBlock(block: Block) {
-    if (await this.checkBlock(block)) {
+  async addBlock(block: Block, isBackchecking = false) {
+    if (await this.checkBlock(block, isBackchecking)) {
       // Update mintedTokens for any mint transactions in this block
       for (const tx of block.transactions) {
         if (tx.mint && tx.receiver === DEV_WALLET) {
           this.mintedTokens.set(tx.mint.token, {
             miningReward: tx.mint.miningReward || 0,
-            airdrop: tx.mint.airdrop
+            airdrop: tx.mint.airdrop,
           });
         }
       }
 
       this.blocks.push(block);
-      
+
       // Add new signatures and cleanup old ones
-      this.usedSignatures.push(...block.transactions.map(tx => tx.signature));
+      this.usedSignatures.push(...block.transactions.map((tx) => tx.signature));
       if (this.usedSignatures.length > this.MAX_USED_SIGNATURES) {
         // Keep only the most recent signatures
-        this.usedSignatures = this.usedSignatures.slice(-this.MAX_USED_SIGNATURES);
+        this.usedSignatures = this.usedSignatures.slice(
+          -this.MAX_USED_SIGNATURES
+        );
       }
 
       // Remove transactions from mempool
       for (const pendingTx of this.mempool) {
         for (const tx of block.transactions) {
-          if (tx.receiver === pendingTx.receiver && tx.sender === pendingTx.sender && 
-              tx.token === pendingTx.token && tx.signature === pendingTx.signature) {
-            this.mempool = this.mempool.filter(mtx => mtx !== pendingTx);
+          if (
+            tx.receiver === pendingTx.receiver &&
+            tx.sender === pendingTx.sender &&
+            tx.token === pendingTx.token &&
+            tx.signature === pendingTx.signature
+          ) {
+            this.mempool = this.mempool.filter((mtx) => mtx !== pendingTx);
           }
         }
       }
+      if (isBackchecking) return true;
       console.log(`Added new block!\n${JSON.stringify(block, null, 2)}`);
-      console.log(`Still have ${this.mempool.length} transactions in mempool to mine...`);
+      console.log(
+        `Still have ${this.mempool.length} transactions in mempool to mine...`
+      );
       return true;
     }
     console.log("Rejecting Block...");
