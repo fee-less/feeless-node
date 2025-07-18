@@ -24,23 +24,25 @@ app.use(cors());
       transactions: [
         {
           sender: "network",
-          receiver: "0217821bc151c94d80290bd4610e283aa4ba1fb411bb8d40d1072fd0ace5a6b9a3",
+          receiver:
+            "03bea510ff0689107a3a7b3ff3968e0554672142bbf6fc6db75d01e7aa6620e4f8",
           amount: FLSStoFPoints(5000000),
           signature: "network",
           nonce: 0,
-          timestamp: Date.now()
-        }
+          timestamp: Date.now(),
+        },
       ],
       prev_hash: "genesis",
       nonce: 0,
-      signature: "3045022100e057f5f136f3f0e5b837660287db7b696b433c8a56665319a829293526d39814022023d6e513727b6b1de23fa28b9a8dee7efb4d91876cd83f1b3993c83a880f7e1a",
-      proposer: "0217821bc151c94d80290bd4610e283aa4ba1fb411bb8d40d1072fd0ace5a6b9a3",
-      hash: "genesis"
-    }
+      signature:
+        "3045022100e057f5f136f3f0e5b837660287db7b696b433c8a56665319a829293526d39814022023d6e513727b6b1de23fa28b9a8dee7efb4d91876cd83f1b3993c83a880f7e1a",
+      proposer:
+        "03bea510ff0689107a3a7b3ff3968e0554672142bbf6fc6db75d01e7aa6620e4f8",
+      hash: "11f0ef7e028354a51d802f85b7da8b46e6bab6d5683af65e0831d0fdaeb7e3",
+    },
   ];
 
   if (fs.existsSync("blockchain")) {
-    blocks = [];
     for (const block of fs.readdirSync("blockchain")) {
       blocks.push(JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8")));
     }

@@ -7,7 +7,7 @@ const { SHA256 } = cryptoJS;
 const ec = new EC("secp256k1");
 
 class Blockchain {
-  public blocks: Block[];
+  public blocks: Block[] = [];
   public mempool: Transaction[] = [];
   public mintedTokens: MintedTokens = new Map(); // Track minted tokens and their mining rules
   private usedSignatures: string[] = []
@@ -15,28 +15,38 @@ class Blockchain {
   private readonly MAX_USED_SIGNATURES = 100000; // Keep last 100k signatures
 
   constructor(blocks: Block[]) {
-    this.blocks = blocks;
-    // Initialize mintedTokens and lastNonces from existing blocks
-    for (const block of blocks) {
-      for (const tx of block.transactions) {
-        if (tx.mint && tx.receiver === DEV_WALLET) {
-          const expectedFee = calculateMintFee(blocks.slice(0, blocks.indexOf(block)).length, this.mintedTokens.size);
-          if (tx.amount === expectedFee) {
-            this.mintedTokens.set(tx.mint.token, {
-              miningReward: tx.mint.miningReward || 0,
-              airdrop: tx.mint.airdrop
-            });
+    (async () => {
+      // Initialize mintedTokens and lastNonces from existing blocks
+      let genesis = true;
+      for (const block of blocks) {
+        if (!genesis) {
+          if (!await this.checkBlock(block, true)) {
+            console.log("!!!WARNING!!! A Synced Block is INVALID. Someone might be trying to tamper with your node. Consider switching to a diffrent node.");
+            return;
           }
         }
-        // Track last nonce for each address
-        if (tx.sender !== "network") {
-          const currentNonce = this.lastNonces.get(tx.sender) || 0;
-          if (tx.nonce > currentNonce) {
-            this.lastNonces.set(tx.sender, tx.nonce);
+        genesis = false;
+        this.blocks.push(block);
+        for (const tx of block.transactions) {
+          if (tx.mint && tx.receiver === DEV_WALLET) {
+            const expectedFee = calculateMintFee(blocks.slice(0, blocks.indexOf(block)).length, this.mintedTokens.size);
+            if (tx.amount === expectedFee) {
+              this.mintedTokens.set(tx.mint.token, {
+                miningReward: tx.mint.miningReward || 0,
+                airdrop: tx.mint.airdrop
+              });
+            }
+          }
+          // Track last nonce for each address
+          if (tx.sender !== "network") {
+            const currentNonce = this.lastNonces.get(tx.sender) || 0;
+            if (tx.nonce > currentNonce) {
+              this.lastNonces.set(tx.sender, tx.nonce);
+            }
           }
         }
       }
-    }
+    })();
   }
 
   calculateBalance(addr: string, includeMempool = false, token: undefined | string = undefined) {
@@ -185,7 +195,7 @@ class Blockchain {
     if (tx.mint) {
       const expectedFee = calculateMintFee(this.blocks.length, this.mintedTokens.size);
       if (tx.receiver !== DEV_WALLET || tx.amount !== expectedFee) {
-        console.log(`Invalid minting transaction - must be sent to DEV_WALLET with fee ${expectedFee}`);
+        console.log(`Invalid minting transaction - must be sent to ${DEV_WALLET} with fee ${expectedFee}, got: ${tx.amount} ${tx.receiver}`);
         return false;
       }
 
@@ -374,7 +384,7 @@ class Blockchain {
     return { isValid: true, hasDevFee, hasReward };
   }
 
-  async checkBlock(block: Block) {
+  async checkBlock(block: Block, ignoreTimestamps = false) {
     let length = 0;
     for (const tx of this.mempool) {
       if (tx.timestamp <= block.timestamp) length++;
@@ -385,7 +395,7 @@ class Blockchain {
       console.log("Block timestamp is in the future!");
       return false;
     }
-    if (block.timestamp < Date.now() - BLOCK_TIME) {
+    if (!ignoreTimestamps && block.timestamp < Date.now() - BLOCK_TIME) {
       console.log("Too old block!");
       return false;
     }
@@ -407,7 +417,7 @@ class Blockchain {
       return false;
     }
 
-    // Check if the provided signature is valid
+    899998;// Check if the provided signature is valid
     if (!ec.keyFromPublic(block.proposer, "hex").verify(SHA256(JSON.stringify({ ...block, hash: '', signature: '' })).toString(), block.signature)) {
       console.log("Invalid block signature!");
       return false;
