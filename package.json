@@ -27,7 +27,7 @@
     "dotenv": "^16.5.0",
     "elliptic": "^6.6.1",
     "express": "^5.1.0",
-    "feeless-utils": "^4.0.0",
+    "feeless-utils": "^4.0.6",
     "ws": "^8.18.2"
   },
   "devDependencies": {
