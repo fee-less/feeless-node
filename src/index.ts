@@ -88,6 +88,7 @@ app.use(cors());
     for (const tx of mempoolTxs) {
       bc.pushTX(tx); // will validate + add to local mempool
     }
+    console.log("Done syncing mempool.");
   }
 
   new P2PNetwork(process.env.PEER ?? "", parseInt(process.env.PORT ?? "6061"), bc);
