@@ -1,6 +1,6 @@
 {
   "name": "feeless-node",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "description": "The sole building block of the feeless network",
   "type": "module",
   "main": "dist/index.js",
