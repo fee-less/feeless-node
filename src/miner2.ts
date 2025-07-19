@@ -62,7 +62,7 @@ if (cluster.isPrimary) {
       if (msg.type === "block_found" && !paused && msg.block) {
         paused = true;
         console.log(
-          `\nBlock found by worker ${worker?.process.pid}. Halting workers.`
+          `\nBlock found by worker ${worker?.process.pid}. Halting workers. Block height: {bh}`
         );
 
         for (const id in cluster.workers) {
@@ -129,7 +129,7 @@ if (cluster.isPrimary) {
     fc.onutx = (tx) => mempool.push(tx);
     fc.onblock = async (block) => {
       diff = await fc.getDiff();
-      bh++;
+      bh = await fc.getBlockHeight();
       reward = calculateReward(bh);
       prevHash = block.hash;
     };

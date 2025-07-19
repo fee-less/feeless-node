@@ -43,7 +43,7 @@ app.use(cors());
   ];
 
   if (fs.existsSync("blockchain")) {
-    for (const block of fs.readdirSync("blockchain")) {
+    for (const block of fs.readdirSync("blockchain").sort((a, b) => parseInt(a) - parseInt(b))) {
       blocks.push(JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8")));
     }
   }

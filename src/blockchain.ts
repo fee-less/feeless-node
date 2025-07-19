@@ -353,13 +353,7 @@ class Blockchain {
           tx.amount !==
           FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)
         ) {
-          console.log(
-            `Invalid dev fee amount! Provided: ${
-              tx.amount
-            } Required: ${FLSStoFPoints(
-              calculateReward(this.blocks.length) * DEV_FEE
-            )}`
-          );
+          console.log(`Invalid dev fee amount! Provided: ${tx.amount} Required: ${FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)}`);
           return { isValid: false, hasDevFee, hasReward };
         }
         hasDevFee = true;
