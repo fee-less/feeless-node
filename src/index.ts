@@ -79,6 +79,7 @@ app.use(cors());
 
   const bc = new Blockchain(blocks);
   bc.onSynced = async () => {
+    if (!process.env.PEER_HTTP) return;
     console.log("Syncing mempool...")
     const mempoolTxs: Transaction[] = await fetch(
       process.env.PEER_HTTP + "/mempool"
