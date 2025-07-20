@@ -1,10 +1,11 @@
-import { calculateMintFee, calculateReward, FLSStoFPoints, getDiff, hashArgon, Transaction } from "feeless-utils";
+import { calculateMintFee, calculateReward, FLSStoFPoints, getDiff, Transaction } from "feeless-utils";
 import Blockchain from "./blockchain.js";
 import P2PNetwork from "./p2pnet.js";
 import express from "express";
 import { config } from "dotenv";
 import cors from "cors";
 import fs from "fs";
+
 if (!fs.existsSync(".env")) fs.writeFileSync(".env",
   `PEER=ws://fee-less.com:6061
 PEER_HTTP=http://fee-less.com:8000
@@ -17,15 +18,15 @@ config();
 const app = express();
 app.use(cors());
 
-(async () => {
-  let blocks = [
+// --- Load local chain from disk ---
+function loadLocalBlocks() {
+  const blocks = [
     {
       timestamp: Date.now(),
       transactions: [
         {
           sender: "network",
-          receiver:
-            "03bea510ff0689107a3a7b3ff3968e0554672142bbf6fc6db75d01e7aa6620e4f8",
+          receiver: "03bea510ff0689107a3a7b3ff3968e0554672142bbf6fc6db75d01e7aa6620e4f8",
           amount: FLSStoFPoints(5000000),
           signature: "network",
           nonce: 0,
@@ -34,69 +35,55 @@ app.use(cors());
       ],
       prev_hash: "genesis",
       nonce: 0,
-      signature:
-        "3045022100e057f5f136f3f0e5b837660287db7b696b433c8a56665319a829293526d39814022023d6e513727b6b1de23fa28b9a8dee7efb4d91876cd83f1b3993c83a880f7e1a",
-      proposer:
-        "03bea510ff0689107a3a7b3ff3968e0554672142bbf6fc6db75d01e7aa6620e4f8",
+      signature: "3045022100e057f5f136f3f0e5b837660287db7b696b433c8a56665319a829293526d39814022023d6e513727b6b1de23fa28b9a8dee7efb4d91876cd83f1b3993c83a880f7e1a",
+      proposer: "03bea510ff0689107a3a7b3ff3968e0554672142bbf6fc6db75d01e7aa6620e4f8",
       hash: "11f0ef7e028354a51d802f85b7da8b46e6bab6d5683af65e0831d0fdaeb7e3",
     },
   ];
-
   if (fs.existsSync("blockchain")) {
     for (const block of fs.readdirSync("blockchain").sort((a, b) => parseInt(a) - parseInt(b))) {
       blocks.push(JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8")));
     }
   }
+  return blocks;
+}
 
-  if (process.env.PEER_HTTP !== "") {
-    console.log("");
-    const myHeight = blocks.length;
-    const height = (await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height;
-    console.log("Syncing " + (height - myHeight) + " blocks...");
-
-    const totalWidth = process.stdout.columns - 7 || 50;
-
-    for (let i = myHeight; i < height; i++) {
+let blocks = loadLocalBlocks();
+let bc = new Blockchain(blocks);
+await bc.waitForSync();
+console.log("Validated local blocks. ")
+// Step 2 & 3: Sync missing blocks from peer
+if (process.env.PEER_HTTP) {
+  let syncing = true;
+  while (syncing) {
+    const remoteHeight = (await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height;
+    const localHeight = bc.blocks.length;
+    if (localHeight >= remoteHeight) {
+      syncing = false;
+      break;
+    }
+    for (let i = localHeight; i < remoteHeight; i++) {
       const block = await fetch(process.env.PEER_HTTP + "/block/" + i).then(res => res.json());
-      blocks[i] = block;
+      bc.mempool.push(...block.transactions);
+      const ok = await bc.addBlock(block, true);
+      if (!ok) {
+        console.error(`Downloaded block at height ${i} is invalid. Stopping sync.`);
+        process.exit(1);
+      }
       if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
       fs.writeFileSync("blockchain/" + i, JSON.stringify(block));
-
-      // Progress bar calculation
-      const progress = (i + 1) / height;
-      const filledBarLength = Math.floor(progress * totalWidth);
-      const emptyBarLength = totalWidth - filledBarLength;
-      const bar = "█".repeat(filledBarLength) + "-".repeat(emptyBarLength);
-
-      // Print bar with carriage return
-      process.stdout.write(`\r[${bar}] ${Math.floor(progress * 100)}%`);
+      process.stdout.write(`\rSynced block ${i + 1}/${remoteHeight}`);
     }
-    if ((await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height != blocks.length) throw Error("Desynced. Please rerun feeless-node.");
-
-    // Final newline after loading bar completes
-    console.log("\nDone syncing blocks.");
-  }  
-
-  const bc = new Blockchain(blocks);
-  bc.onSynced = async () => {
-    if (!process.env.PEER_HTTP) return;
-    console.log("Syncing mempool...")
-    const mempoolTxs: Transaction[] = await fetch(
-      process.env.PEER_HTTP + "/mempool"
-    ).then((res) => res.json());
-
-    for (const tx of mempoolTxs) {
-      bc.pushTX(tx); // will validate + add to local mempool
-    }
-    console.log("Done syncing mempool.");
   }
+  console.log("\nSync complete.");
 
-  new P2PNetwork(process.env.PEER ?? "", parseInt(process.env.PORT ?? "6061"), bc);
+  // Start P2P and API as usual
+  const p2p = new P2PNetwork(process.env.PEER ?? "", parseInt(process.env.PORT ?? "6061"), bc);
 
   app.get("/block/:height", (req, res) => {
     try {
       res.json(bc.blocks[parseInt(req.params.height)]);
-    } catch(e: any) {
+    } catch (e: any) {
       res.json({ error: e.message });
       console.log("[ERROR]", e);
     }
@@ -112,7 +99,6 @@ app.use(cors());
   });
 
   app.get("/mempool", (_, res) => {
-    // Return all pending transactions
     res.json(bc.mempool);
   });
 
@@ -247,11 +233,11 @@ app.use(cors());
             // Skip network transactions unless they're rewards to this address
             if (tx.sender === 'network' && tx.receiver !== addr) continue;
 
-            const type = tx.sender === addr ? 'send' : 
-                        tx.mint ? 'mint' : 'receive';
-            
+            const type = tx.sender === addr ? 'send' :
+              tx.mint ? 'mint' : 'receive';
+
             const otherAddress = tx.sender === addr ? tx.receiver : tx.sender;
-            
+
             history.push({
               type,
               amount: tx.amount,
@@ -270,7 +256,7 @@ app.use(cors());
         if (tx.sender === addr || tx.receiver === addr) {
           const type = tx.sender === addr ? 'send' : 'receive';
           const otherAddress = tx.sender === addr ? tx.receiver : tx.sender;
-          
+
           history.push({
             type,
             amount: tx.amount,
@@ -337,6 +323,7 @@ app.use(cors());
       console.log("[ERROR]", e);
     }
   });
+
   console.log("Ready.");
   app.listen(parseInt(process.env.HTTP_PORT ?? "8000"));
-})();
+};

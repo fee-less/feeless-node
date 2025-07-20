@@ -8,6 +8,7 @@ class P2PNetwork {
   public bc: Blockchain;
   private wss: WebSocketServer;
   private wsc: WebSocket | null;
+  public onBlockReceived?: (block: Block) => void;
 
   constructor(peer: string, port: number, bc: Blockchain) {
     this.bc = bc;
@@ -43,6 +44,8 @@ class P2PNetwork {
     if (payload.event === "tx") {
       if (this.incomingTX(payload.data as Transaction)) this.toPeers(payload);
     } else if (payload.event === "block") {
+      if (payload.data.hash === this.bc.blocks[this.bc.blocks.length - 1].hash) return;
+      if (this.onBlockReceived) this.onBlockReceived(payload.data as Block);
       if (await this.incomingBlock(payload.data as Block)) this.toPeers(payload);
     }
   }

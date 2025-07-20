@@ -62,7 +62,7 @@ if (cluster.isPrimary) {
       if (msg.type === "block_found" && !paused && msg.block) {
         paused = true;
         console.log(
-          `\nBlock found by worker ${worker?.process.pid}. Halting workers. Block height: {bh}`
+          `\nBlock found by worker ${worker?.process.pid}. Halting workers.`
         );
 
         for (const id in cluster.workers) {
@@ -212,6 +212,7 @@ if (cluster.isPrimary) {
       block.hash = hash.toString(16);
 
       if (process.send) {
+        console.log("Found @" + bh);
         process.send({ type: "block_found", block });
       }
     };

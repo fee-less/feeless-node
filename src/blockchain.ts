@@ -14,8 +14,13 @@ class Blockchain {
   private usedSignatures: string[] = [];
   private lastNonces: Map<string, number> = new Map(); // Track last nonce for each address
   private readonly MAX_USED_SIGNATURES = 100000; // Keep last 100k signatures
+  private _syncPromise: Promise<void> | null = null;
+  private _syncResolve: (() => void) | null = null;
 
   constructor(blocks: Block[]) {
+    this._syncPromise = new Promise((resolve) => {
+      this._syncResolve = resolve;
+    });
     (async () => {
       // Initialize mintedTokens and lastNonces from existing blocks
       let genesis = true;
@@ -25,7 +30,7 @@ class Blockchain {
           genesis = false;
           continue;
         }
-        this.mempool.push(...block.transactions)
+        this.mempool.push(...block.transactions);
         if (!(await this.addBlock(block, true))) {
           console.log(
             "[WARNING] SOMEONE MIGHT BE TAMPERING WITH YOUR NODE. The node you are syncing from has sent you a bad block. consider changing it for a diffrent one.", block
@@ -34,7 +39,14 @@ class Blockchain {
         }
       }
       this.onSynced();
+      if (this._syncResolve) this._syncResolve();
     })();
+  }
+
+  async waitForSync() {
+    if (this._syncPromise) {
+      await this._syncPromise;
+    }
   }
 
   calculateBalance(
@@ -551,10 +563,6 @@ class Blockchain {
           }
         }
       }
-      if (!inTxs && tx.sender !== "network" && tx.sender !== "mint") {
-        console.log(`Invalid TX:\n${JSON.stringify(tx, null, 2)}`);
-        return false;
-      }
 
       // Pass isBlockValidation=true when checking transactions in a block
       if (!this.checkTX(tx, false, true)) {
@@ -611,6 +619,35 @@ class Blockchain {
     }
     console.log("Rejecting Block...");
     return false;
+  }
+
+  // Rolls back the chain to the given height (exclusive), removing all blocks after that height
+  rollbackTo(height: number) {
+    if (height < 1) height = 1; // Never remove genesis
+    this.blocks = this.blocks.slice(0, height);
+    // Rebuild mintedTokens, usedSignatures, lastNonces, and mempool from scratch
+    this.mintedTokens = new Map();
+    this.usedSignatures = [];
+    this.lastNonces = new Map();
+    let allTxs: Transaction[] = [];
+    for (let i = 0; i < this.blocks.length; i++) {
+      const block = this.blocks[i];
+      for (const tx of block.transactions) {
+        if (tx.mint && tx.receiver === DEV_WALLET) {
+          this.mintedTokens.set(tx.mint.token, {
+            miningReward: tx.mint.miningReward || 0,
+            airdrop: tx.mint.airdrop,
+          });
+        }
+        this.usedSignatures.push(tx.signature);
+        this.lastNonces.set(tx.sender, tx.nonce);
+        allTxs.push(tx);
+      }
+    }
+    // Remove from mempool any txs that are now in the chain
+    this.mempool = this.mempool.filter(
+      tx => !allTxs.some(btx => btx.signature === tx.signature)
+    );
   }
 }
 
