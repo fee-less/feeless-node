@@ -11,7 +11,7 @@ import cors from "cors";
 import fs from "fs";
 console.log("Reading config...");
 if (!fs.existsSync(".env")) fs.writeFileSync(".env",
-  `PEER=ws://fee-less.com:6061
+  `PEER=ws://fee-less.com:6061,ws://fee-less.com:6062
 PEER_HTTP=http://fee-less.com:8000
 PORT=6061
 HTTP_PORT=8000`
