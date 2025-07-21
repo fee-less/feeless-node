@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import cluster from "cluster";
 import os from "os";
 import {

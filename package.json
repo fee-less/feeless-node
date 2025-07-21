@@ -11,8 +11,8 @@
     "client": "node dist/client.js"
   },
   "bin": {
-    "feeless-node": "./bootstrap.js",
-    "feeless-miner": "./minerBootstrap.js"
+    "feeless-node": "./dist/index.js",
+    "feeless-miner": "./dist/miner2.js"
   },
   "keywords": [],
   "author": "",

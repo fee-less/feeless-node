@@ -31,7 +31,7 @@ class Blockchain {
           continue;
         }
         this.mempool.push(...block.transactions);
-        if (!(await this.addBlock(block, true))) {
+        if (!(await this.addBlock(block, true, true))) {
           console.log(
             "[WARNING] SOMEONE MIGHT BE TAMPERING WITH YOUR NODE. The node you are syncing from has sent you a bad block. consider changing it for a diffrent one.", block
           );
@@ -457,7 +457,20 @@ class Blockchain {
     return { isValid: true, hasDevFee, hasReward };
   }
 
-  async checkBlock(block: Block, isBackchecking = false) {
+  async checkBlock(block: Block, isBackchecking = false, skipHashing = false) {
+    // Prevent multiple transactions from the same sender (excluding dev fee and reward txs)
+    const seenSenders = new Set<string>();
+    for (const tx of block.transactions) {
+      // Ignore dev fee and reward transactions
+      if (tx.sender === "network") continue;
+      if (tx.sender === "mint") continue;
+      if (seenSenders.has(tx.sender)) {
+        console.log(`Block contains multiple transactions from sender: ${tx.sender}`);
+        return false;
+      }
+      seenSenders.add(tx.sender);
+    }
+
     let length = 0;
     for (const tx of this.mempool) {
       if (tx.timestamp <= block.timestamp) length++;
@@ -484,6 +497,7 @@ class Blockchain {
 
     // Check if the provided hash matches the calculated hash of the block
     if (
+      !skipHashing &&
       (
         await hashArgon(JSON.stringify({ ...block, hash: "", signature: "" }))
       ).toString(16) !== block.hash
@@ -574,8 +588,8 @@ class Blockchain {
     return true;
   }
 
-  async addBlock(block: Block, isBackchecking = false) {
-    if (await this.checkBlock(block, isBackchecking)) {
+  async addBlock(block: Block, isBackchecking = false, skipHashing = false) {
+    if (await this.checkBlock(block, isBackchecking, skipHashing)) {
       // Update mintedTokens for any mint transactions in this block
       for (const tx of block.transactions) {
         if (tx.mint && tx.receiver === DEV_WALLET) {
@@ -619,35 +633,6 @@ class Blockchain {
     }
     console.log("Rejecting Block...");
     return false;
-  }
-
-  // Rolls back the chain to the given height (exclusive), removing all blocks after that height
-  rollbackTo(height: number) {
-    if (height < 1) height = 1; // Never remove genesis
-    this.blocks = this.blocks.slice(0, height);
-    // Rebuild mintedTokens, usedSignatures, lastNonces, and mempool from scratch
-    this.mintedTokens = new Map();
-    this.usedSignatures = [];
-    this.lastNonces = new Map();
-    let allTxs: Transaction[] = [];
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i];
-      for (const tx of block.transactions) {
-        if (tx.mint && tx.receiver === DEV_WALLET) {
-          this.mintedTokens.set(tx.mint.token, {
-            miningReward: tx.mint.miningReward || 0,
-            airdrop: tx.mint.airdrop,
-          });
-        }
-        this.usedSignatures.push(tx.signature);
-        this.lastNonces.set(tx.sender, tx.nonce);
-        allTxs.push(tx);
-      }
-    }
-    // Remove from mempool any txs that are now in the chain
-    this.mempool = this.mempool.filter(
-      tx => !allTxs.some(btx => btx.signature === tx.signature)
-    );
   }
 }
 

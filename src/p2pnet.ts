@@ -9,35 +9,70 @@ class P2PNetwork {
   private wss: WebSocketServer;
   private wsc: WebSocket | null;
   public onBlockReceived?: (block: Block) => void;
+  private peerUrl: string;
+  private reconnectTimeout: NodeJS.Timeout | null = null;
+  private maxReconnectAttempts = 10;
+  private reconnectAttempts = 0;
 
   constructor(peer: string, port: number, bc: Blockchain) {
     this.bc = bc;
+    this.peerUrl = peer;
     this.wss = new WebSocketServer({ port });
-    this.wsc = peer ? new WebSocket(peer) : null;
+    this.wsc = peer ? this.createPeerSocket() : null;
     this.wss.addListener("connection", ws => {
       ws.on("message", data => {
         try {
           const payload: EventPayload = JSON.parse(data.toString());
+          console.log("Payload:", data.toString());
           this.onPeerPayload(payload);
         } catch (e: any) {
-          console.log("[INTERNAL SERVER ERROR]", e);
+          console.log("[INVALID PAYLOAD]", e);
         }
       })
     });
-    this.wsc?.addListener("message", data => {
+  }
+
+  private createPeerSocket(): WebSocket {
+    const ws = new WebSocket(this.peerUrl);
+    ws.addEventListener("message", data => {
       try {
-        const payload: EventPayload = JSON.parse(data.toString());
+        const payload: EventPayload = JSON.parse(data.data.toString());
         this.onPeerPayload(payload);
       } catch (e: any) {
         console.log("[INTERNAL SERVER ERROR]", e);
       }
     });
-    this.wsc?.addListener("open", () => {
-      console.log("Connected to peer: " + peer);
+    ws.addEventListener("open", () => {
+      console.log("Connected to peer: " + this.peerUrl);
+      if (this.reconnectTimeout) {
+        clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = null;
+      }
+      this.reconnectAttempts = 0; // Reset on success
     });
-    this.wsc?.addListener("close", () => {
-      console.log("Disconnected from peer: " + peer);
+    ws.addEventListener("close", () => {
+      console.log("Disconnected from peer: " + this.peerUrl);
+      this.scheduleReconnect();
     });
+    ws.addEventListener("error", (err) => {
+      console.log("Peer connection error:", err);
+      this.scheduleReconnect();
+      ws.close(); // Ensure close event fires
+    });
+    return ws;
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimeout) return; // Already scheduled
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error(`Failed to reconnect to peer after ${this.maxReconnectAttempts} attempts. Giving up.`);
+      return;
+    }
+    this.reconnectTimeout = setTimeout(() => {
+      this.reconnectAttempts++;
+      console.log(`Attempting to reconnect to peer: ${this.peerUrl} (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      this.wsc = this.createPeerSocket();
+    }, 5000);
   }
 
   async onPeerPayload(payload: EventPayload) {

@@ -1,3 +1,7 @@
+#!/usr/bin/env node
+
+console.log("Starting node...")
+
 import { calculateMintFee, calculateReward, FLSStoFPoints, getDiff, Transaction } from "feeless-utils";
 import Blockchain from "./blockchain.js";
 import P2PNetwork from "./p2pnet.js";
@@ -5,13 +9,14 @@ import express from "express";
 import { config } from "dotenv";
 import cors from "cors";
 import fs from "fs";
-
+console.log("Reading config...");
 if (!fs.existsSync(".env")) fs.writeFileSync(".env",
   `PEER=ws://fee-less.com:6061
 PEER_HTTP=http://fee-less.com:8000
 PORT=6061
 HTTP_PORT=8000`
 );
+console.log("Initializing HTTP API...");
 
 config();
 
@@ -48,6 +53,7 @@ function loadLocalBlocks() {
   return blocks;
 }
 
+console.log("Loading local blocks...")
 let blocks = loadLocalBlocks();
 let bc = new Blockchain(blocks);
 await bc.waitForSync();
@@ -55,8 +61,16 @@ console.log("Validated local blocks. ")
 // Step 2 & 3: Sync missing blocks from peer
 if (process.env.PEER_HTTP) {
   let syncing = true;
+  let lastRemoteHeight = 0;
+  let lastHeightCheck = 0;
+  const HEIGHT_CHECK_INTERVAL = 5000;
   while (syncing) {
-    const remoteHeight = (await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height;
+    const now = Date.now();
+    if (now - lastHeightCheck > HEIGHT_CHECK_INTERVAL || lastRemoteHeight === 0) {
+      lastRemoteHeight = (await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height;
+      lastHeightCheck = now;
+    }
+    const remoteHeight = lastRemoteHeight;
     const localHeight = bc.blocks.length;
     if (localHeight >= remoteHeight) {
       syncing = false;
