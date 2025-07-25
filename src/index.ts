@@ -177,7 +177,7 @@ if (process.env.PEER_HTTP) {
         if (tx.receiver === req.params.addr && tx.token) {
           if (!balanceTokens[tx.token]) balanceTokens[tx.token] = 0;
           balanceTokens[tx.token] += tx.amount;
-        }
+      }
         if (tx.sender === req.params.addr && tx.token) balanceTokens[tx.token] -= tx.amount;
       }
       const tokens = [];

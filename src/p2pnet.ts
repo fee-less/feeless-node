@@ -103,12 +103,17 @@ class P2PNetwork {
   }
 
   async onPeerPayload(payload: EventPayload) {
-    if (payload.event === "tx") {
-      if (this.incomingTX(payload.data as Transaction)) this.toPeers(payload);
-    } else if (payload.event === "block") {
-      if (payload.data.hash === this.bc.blocks[this.bc.blocks.length - 1].hash) return;
-      if (this.onBlockReceived) this.onBlockReceived(payload.data as Block);
-      if (await this.incomingBlock(payload.data as Block)) this.toPeers(payload);
+    try {
+      if (payload.event === "tx") {
+        if (this.incomingTX(payload.data as Transaction)) this.toPeers(payload);
+      } else if (payload.event === "block") {
+        if (payload.data.hash === this.bc.blocks[this.bc.blocks.length - 1].hash) return;
+        if (this.onBlockReceived) this.onBlockReceived(payload.data as Block);
+        if (await this.incomingBlock(payload.data as Block)) this.toPeers(payload);
+      }
+    } catch (e) {
+      console.error(e);
+      console.log(payload);
     }
   }
 
