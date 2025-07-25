@@ -90,185 +90,167 @@ if (process.env.PEER_HTTP) {
     }
   }
   console.log("\nSync complete.");
+};
 
-  // Start P2P and API as usual
-  const p2p = new P2PNetwork(process.env.PEER ?? "", parseInt(process.env.PORT ?? "6061"), bc);
+// Start P2P and API as usual
+const p2p = new P2PNetwork(process.env.PEER ?? "", parseInt(process.env.PORT ?? "6061"), bc);
 
-  app.get("/block/:height", (req, res) => {
-    try {
-      res.json(bc.blocks[parseInt(req.params.height)]);
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
-    }
-  });
+app.get("/block/:height", (req, res) => {
+  try {
+    res.json(bc.blocks[parseInt(req.params.height)]);
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-  app.get("/height", (_, res) => {
-    try {
-      res.json({ height: bc.blocks.length });
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
-    }
-  });
+app.get("/height", (_, res) => {
+  try {
+    res.json({ height: bc.blocks.length });
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-  app.get("/mempool", (_, res) => {
-    res.json(bc.mempool);
-  });
+app.get("/mempool", (_, res) => {
+  res.json(bc.mempool);
+});
 
-  app.get("/diff", (_, res) => {
-    try {
-      res.json({ diff: getDiff(bc.blocks).toString(16) });
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
-    }
-  });
+app.get("/diff", (_, res) => {
+  try {
+    res.json({ diff: getDiff(bc.blocks).toString(16) });
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-  app.get("/mint-fee", (_, res) => {
-    try {
-      res.json({ fee: calculateMintFee(bc.blocks.length, bc.mintedTokens.size) });
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
-    }
-  });
+app.get("/mint-fee", (_, res) => {
+  try {
+    res.json({ fee: calculateMintFee(bc.blocks.length, bc.mintedTokens.size) });
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-  app.get("/reward", (_, res) => {
-    try {
-      res.json({ reward: calculateReward(bc.blocks.length) });
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
-    }
-  });
+app.get("/reward", (_, res) => {
+  try {
+    res.json({ reward: calculateReward(bc.blocks.length) });
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-  app.get("/balance/:addr", (req, res) => {
-    try {
-      res.json(bc.calculateBalance(req.params.addr.split(".")[0], false, req.params.addr.split(".")[1]));
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
-    }
-  });
+app.get("/balance/:addr", (req, res) => {
+  try {
+    res.json(bc.calculateBalance(req.params.addr.split(".")[0], false, req.params.addr.split(".")[1]));
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-  app.get("/balance-mempool/:addr", (req, res) => {
-    try {
-      res.json(bc.calculateBalance(req.params.addr.split(".")[0], true, req.params.addr.split(".")[1]));
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
-    }
-  });
+app.get("/balance-mempool/:addr", (req, res) => {
+  try {
+    res.json(bc.calculateBalance(req.params.addr.split(".")[0], true, req.params.addr.split(".")[1]));
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-  app.get("/tokens/:addr", (req, res) => {
-    try {
-      const balanceTokens: Record<string, number> = {};
-      for (const block of bc.blocks) {
-        for (const tx of block.transactions) {
-          if (tx.receiver === req.params.addr && tx.token) {
-            if (!balanceTokens[tx.token]) balanceTokens[tx.token] = 0;
-            balanceTokens[tx.token] += tx.amount;
-          }
-          if (tx.sender === req.params.addr && tx.token) balanceTokens[tx.token] -= tx.amount;
-        }
-      }
-      for (const tx of bc.mempool) {
+app.get("/tokens/:addr", (req, res) => {
+  try {
+    const balanceTokens: Record<string, number> = {};
+    for (const block of bc.blocks) {
+      for (const tx of block.transactions) {
         if (tx.receiver === req.params.addr && tx.token) {
           if (!balanceTokens[tx.token]) balanceTokens[tx.token] = 0;
           balanceTokens[tx.token] += tx.amount;
-      }
+        }
         if (tx.sender === req.params.addr && tx.token) balanceTokens[tx.token] -= tx.amount;
       }
-      const tokens = [];
-      for (const token in balanceTokens) {
-        if (balanceTokens[token] > 0) tokens.push(token);
-      }
-      res.json(tokens)
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
     }
-  });
-
-  app.get("/token-info/:token", (req, res) => {
-    try {
-      res.json(bc.mintedTokens.get(req.params.token));
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
+    for (const tx of bc.mempool) {
+      if (tx.receiver === req.params.addr && tx.token) {
+        if (!balanceTokens[tx.token]) balanceTokens[tx.token] = 0;
+        balanceTokens[tx.token] += tx.amount;
     }
-  });
-
-  app.get("/token-count", (_, res) => {
-    try {
-      res.json({ count: bc.mintedTokens.size });
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
+      if (tx.sender === req.params.addr && tx.token) balanceTokens[tx.token] -= tx.amount;
     }
-  });
-
-  app.get("/token/:i", (req, res) => {
-    try {
-      const index = parseInt(req.params.i);
-      if (isNaN(index) || index < 0 || index >= bc.mintedTokens.size) {
-        res.json({ error: "Invalid token index" });
-        return;
-      }
-      // Convert Map to array and get the token at the specified index
-      const tokens = Array.from(bc.mintedTokens.entries());
-      const [tokenName, tokenInfo] = tokens[index];
-      res.json({ token: tokenName, ...tokenInfo });
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
+    const tokens = [];
+    for (const token in balanceTokens) {
+      if (balanceTokens[token] > 0) tokens.push(token);
     }
-  });
+    res.json(tokens)
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-  app.get("/history/:addr", (req, res) => {
-    try {
-      const addr = req.params.addr;
-      const history: {
-        type: 'send' | 'receive' | 'mint';
-        amount: number;
-        token?: string;
-        timestamp: number;
-        status: 'confirmed' | 'pending';
-        address: string;
-        blockHeight?: number;
-      }[] = [];
+app.get("/token-info/:token", (req, res) => {
+  try {
+    res.json(bc.mintedTokens.get(req.params.token));
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-      // Get confirmed transactions from blocks
-      for (let i = 0; i < bc.blocks.length; i++) {
-        const block = bc.blocks[i];
-        for (const tx of block.transactions) {
-          if (tx.sender === addr || tx.receiver === addr) {
-            // Skip network transactions unless they're rewards to this address
-            if (tx.sender === 'network' && tx.receiver !== addr) continue;
+app.get("/token-count", (_, res) => {
+  try {
+    res.json({ count: bc.mintedTokens.size });
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-            const type = tx.sender === addr ? 'send' :
-              tx.mint ? 'mint' : 'receive';
+app.get("/token/:i", (req, res) => {
+  try {
+    const index = parseInt(req.params.i);
+    if (isNaN(index) || index < 0 || index >= bc.mintedTokens.size) {
+      res.json({ error: "Invalid token index" });
+      return;
+    }
+    // Convert Map to array and get the token at the specified index
+    const tokens = Array.from(bc.mintedTokens.entries());
+    const [tokenName, tokenInfo] = tokens[index];
+    res.json({ token: tokenName, ...tokenInfo });
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-            const otherAddress = tx.sender === addr ? tx.receiver : tx.sender;
+app.get("/history/:addr", (req, res) => {
+  try {
+    const addr = req.params.addr;
+    const history: {
+      type: 'send' | 'receive' | 'mint';
+      amount: number;
+      token?: string;
+      timestamp: number;
+      status: 'confirmed' | 'pending';
+      address: string;
+      blockHeight?: number;
+    }[] = [];
 
-            history.push({
-              type,
-              amount: tx.amount,
-              token: tx.token,
-              timestamp: tx.timestamp,
-              status: 'confirmed',
-              address: otherAddress,
-              blockHeight: i
-            });
-          }
-        }
-      }
-
-      // Get pending transactions from mempool
-      for (const tx of bc.mempool) {
+    // Get confirmed transactions from blocks
+    for (let i = 0; i < bc.blocks.length; i++) {
+      const block = bc.blocks[i];
+      for (const tx of block.transactions) {
         if (tx.sender === addr || tx.receiver === addr) {
-          const type = tx.sender === addr ? 'send' : 'receive';
+          // Skip network transactions unless they're rewards to this address
+          if (tx.sender === 'network' && tx.receiver !== addr) continue;
+
+          const type = tx.sender === addr ? 'send' :
+            tx.mint ? 'mint' : 'receive';
+
           const otherAddress = tx.sender === addr ? tx.receiver : tx.sender;
 
           history.push({
@@ -276,68 +258,86 @@ if (process.env.PEER_HTTP) {
             amount: tx.amount,
             token: tx.token,
             timestamp: tx.timestamp,
-            status: 'pending',
-            address: otherAddress
+            status: 'confirmed',
+            address: otherAddress,
+            blockHeight: i
           });
         }
       }
-
-      // Sort by timestamp, most recent first
-      history.sort((a, b) => b.timestamp - a.timestamp);
-
-      res.json(history);
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
     }
-  });
 
-  app.get("/search-blocks/:hash", (req, res) => {
-    try {
-      const hash = req.params.hash;
-      // Search through blocks to find matching hash
-      for (let i = 0; i < bc.blocks.length; i++) {
-        if (bc.blocks[i].hash === hash) {
-          res.json({ block: bc.blocks[i], height: i });
-          return;
-        }
+    // Get pending transactions from mempool
+    for (const tx of bc.mempool) {
+      if (tx.sender === addr || tx.receiver === addr) {
+        const type = tx.sender === addr ? 'send' : 'receive';
+        const otherAddress = tx.sender === addr ? tx.receiver : tx.sender;
+
+        history.push({
+          type,
+          amount: tx.amount,
+          token: tx.token,
+          timestamp: tx.timestamp,
+          status: 'pending',
+          address: otherAddress
+        });
       }
-      res.json({ error: "Block not found" });
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
     }
-  });
 
-  app.get("/search-tx/:query", (req, res) => {
-    try {
-      const query = req.params.query;
-      const results: { tx: Transaction, blockHeight?: number }[] = [];
+    // Sort by timestamp, most recent first
+    history.sort((a, b) => b.timestamp - a.timestamp);
 
-      // Search in blocks
-      for (let i = 0; i < bc.blocks.length; i++) {
-        const block = bc.blocks[i];
-        for (const tx of block.transactions) {
-          if (tx.signature === query || tx.sender === query || tx.receiver === query) {
-            results.push({ tx, blockHeight: i });
-          }
-        }
+    res.json(history);
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
+
+app.get("/search-blocks/:hash", (req, res) => {
+  try {
+    const hash = req.params.hash;
+    // Search through blocks to find matching hash
+    for (let i = 0; i < bc.blocks.length; i++) {
+      if (bc.blocks[i].hash === hash) {
+        res.json({ block: bc.blocks[i], height: i });
+        return;
       }
+    }
+    res.json({ error: "Block not found" });
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
 
-      // Search in mempool
-      for (const tx of bc.mempool) {
+app.get("/search-tx/:query", (req, res) => {
+  try {
+    const query = req.params.query;
+    const results: { tx: Transaction, blockHeight?: number }[] = [];
+
+    // Search in blocks
+    for (let i = 0; i < bc.blocks.length; i++) {
+      const block = bc.blocks[i];
+      for (const tx of block.transactions) {
         if (tx.signature === query || tx.sender === query || tx.receiver === query) {
-          results.push({ tx });
+          results.push({ tx, blockHeight: i });
         }
       }
-
-      res.json({ results });
-    } catch (e: any) {
-      res.json({ error: e.message });
-      console.log("[ERROR]", e);
     }
-  });
 
-  console.log("Ready.");
-  app.listen(parseInt(process.env.HTTP_PORT ?? "8000"));
-};
+    // Search in mempool
+    for (const tx of bc.mempool) {
+      if (tx.signature === query || tx.sender === query || tx.receiver === query) {
+        results.push({ tx });
+      }
+    }
+
+    res.json({ results });
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
+
+console.log("Ready.");
+app.listen(parseInt(process.env.HTTP_PORT ?? "8000"));
