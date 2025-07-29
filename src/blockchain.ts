@@ -33,7 +33,8 @@ class Blockchain {
         this.mempool.push(...block.transactions);
         if (!(await this.addBlock(block, true, true))) {
           console.log(
-            "[WARNING] SOMEONE MIGHT BE TAMPERING WITH YOUR NODE. The node you are syncing from has sent you a bad block. consider changing it for a diffrent one.", block
+            "[WARNING] SOMEONE MIGHT BE TAMPERING WITH YOUR NODE. The node you are syncing from has sent you a bad block. consider changing it for a diffrent one.",
+            block
           );
           return;
         }
@@ -64,7 +65,8 @@ class Blockchain {
           if (tx.sender === addr && tx.token === token) bal -= tx.amount;
           continue;
         }
-        if (tx.receiver === addr) bal += tx.amount;
+        if (tx.receiver === addr && (!tx.unlock || tx.unlock < Date.now()))
+          bal += tx.amount;
         if (tx.sender === addr) bal -= tx.amount;
       }
     }
@@ -72,12 +74,41 @@ class Blockchain {
     for (const block of this.blocks) {
       for (const tx of block.transactions) {
         if (token || tx.token) {
-          if (tx.receiver === addr && tx.token === token) bal += tx.amount;
+          if (
+            tx.receiver === addr &&
+            tx.token === token &&
+            (!tx.unlock || tx.unlock < Date.now())
+          )
+            bal += tx.amount;
           if (tx.sender === addr && tx.token === token) bal -= tx.amount;
           continue;
         }
-        if (tx.receiver === addr) bal += tx.amount;
+        if (tx.receiver === addr && (!tx.unlock || tx.unlock < Date.now()))
+          bal += tx.amount;
         if (tx.sender === addr) bal -= tx.amount;
+      }
+    }
+    return bal;
+  }
+
+  calculateLocked(
+    addr: string,
+    token?: string
+  ) {
+    let bal = 0;
+    // Then check confirmed blocks
+    for (const block of this.blocks) {
+      for (const tx of block.transactions) {
+        if (token || tx.token) {
+          if (
+            tx.receiver === addr &&
+            tx.token === token &&
+            tx.unlock &&
+            tx.unlock >= Date.now()
+          ) bal += tx.amount;
+          continue;
+        }
+        if (tx.receiver === addr && tx.unlock && tx.unlock >= Date.now()) bal += tx.amount;
       }
     }
     return bal;
@@ -124,34 +155,14 @@ class Blockchain {
       return false;
     }
 
-    // Handle network transactions (airdrops and mining rewards)
-    if (tx.sender === "network" && tx.signature === "network") {
-      // Handle mining rewards and dev fees
-      if (!tx.token) {
-        // This is a native FLSS reward or dev fee transaction
-        if (tx.receiver === DEV_WALLET) {
-          // Dev fee transaction
-          if (
-            tx.amount !==
-            FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)
-          ) {
-            console.log(`Invalid dev fee amount! Provided: ${tx.amount} Required: ${FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)}`);
-            return false;
-          }
-          return true;
-        } else {
-          // Mining reward transaction
-          if (
-            tx.amount !==
-            FLSStoFPoints(calculateReward(this.blocks.length) * (1 - DEV_FEE))
-          ) {
-            console.log("Invalid mining reward amount");
-            return false;
-          }
-          return true;
-        }
-      }
-      return false; // Network transactions with tokens are not allowed
+    if (tx.unlock && !Number.isInteger(tx.unlock)) {
+      console.log("Invalid unlock param.");
+      return false;
+    }
+
+    if (tx.unlock && tx.timestamp >= tx.unlock) {
+      console.log("Invalid unlock time.");
+      return false;
     }
 
     // Handle mint transactions
@@ -168,6 +179,10 @@ class Blockchain {
               calculateMintFee(this.blocks.length, this.mintedTokens.size) &&
             pendingTx.mint.token === tx.token
           ) {
+            if (tx.unlock) {
+              console.log("Mint tx cannot be locked.");
+              return false;
+            }
             // Found pending mint, validate airdrop amount
             if (tx.amount !== pendingTx.mint.airdrop) {
               console.log("Invalid airdrop amount");
@@ -224,7 +239,7 @@ class Blockchain {
         this.blocks.length,
         this.mintedTokens.size
       );
-      if (tx.receiver !== DEV_WALLET || tx.amount !== expectedFee) {
+      if (tx.receiver !== DEV_WALLET || tx.amount !== expectedFee || tx.unlock) {
         console.log(
           `Invalid minting transaction - must be sent to ${DEV_WALLET} with fee ${expectedFee}, got: ${tx.amount} ${tx.receiver}`
         );
@@ -361,19 +376,27 @@ class Blockchain {
     for (const tx of block.transactions) {
       // Validate dev fee transaction
       if (tx.sender === "network" && tx.receiver === DEV_WALLET && !tx.token) {
-        if (
-          tx.amount !==
-          FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)
-        ) {
-          console.log(`Invalid dev fee amount! Provided: ${tx.amount} Required: ${FLSStoFPoints(calculateReward(this.blocks.length) * DEV_FEE)}`);
+        if (tx.unlock) {
+          console.log("Dev fee tx cannot be locked.");
           return { isValid: false, hasDevFee, hasReward };
         }
+
+        if (hasDevFee) {
+          console.log("Block has multiple dev fee transactions");
+          return { isValid: false, hasDevFee, hasReward };
+        }
+
         hasDevFee = true;
         continue;
       }
 
       // Validate reward transaction
       if (tx.sender === "network" && tx.receiver !== DEV_WALLET) {
+        if (tx.unlock) {
+          console.log("Reward tx cannot be locked.");
+          return { isValid: false, hasDevFee, hasReward };
+        }
+
         if (tokenRewardTx) {
           console.log("Block has multiple reward transactions");
           return { isValid: false, hasDevFee, hasReward };
@@ -399,7 +422,7 @@ class Blockchain {
           // FLSS reward validation
           if (
             tx.amount !==
-            FLSStoFPoints(calculateReward(this.blocks.length) * (1 - DEV_FEE))
+            Math.round(calculateReward(this.blocks.length) * (1 - DEV_FEE))
           ) {
             console.log(`Invalid FLSS reward amount: ${tx.amount}`);
             return { isValid: false, hasDevFee, hasReward };
@@ -412,6 +435,10 @@ class Blockchain {
 
       // Validate airdrop transaction
       if (tx.sender === "mint" && tx.token) {
+        if (tx.unlock) {
+          console.log("Mint tx cannot be locked.");
+          return { isValid: false, hasDevFee, hasReward };
+        }
         // Check both existing and pending mints
         const tokenInfo =
           this.mintedTokens.get(tx.token) || pendingMints.get(tx.token);
@@ -465,7 +492,9 @@ class Blockchain {
       if (tx.sender === "network") continue;
       if (tx.sender === "mint") continue;
       if (seenSenders.has(tx.sender)) {
-        console.log(`Block contains multiple transactions from sender: ${tx.sender}`);
+        console.log(
+          `Block contains multiple transactions from sender: ${tx.sender}`
+        );
         return false;
       }
       seenSenders.add(tx.sender);
@@ -486,7 +515,8 @@ class Blockchain {
       return false;
     }
 
-    if (block.transactions.length < 0.75 * length) {
+    if (!isBackchecking && block.transactions.length - 2 < 0.75 * length) {
+      // Minimum 75 % of txs from mempool
       console.log(
         `Block has not enough transactions, got ${
           block.transactions.length
@@ -550,7 +580,6 @@ class Blockchain {
 
     // Check the validity of each transaction in the block
     for (const tx of block.transactions) {
-      let inTxs = false;
       for (const pendingTx of this.mempool) {
         if (
           pendingTx.signature === tx.signature &&
@@ -560,7 +589,6 @@ class Blockchain {
           pendingTx.sender === tx.sender &&
           pendingTx.token === tx.token
         ) {
-          inTxs = true;
           // If this is a mint transaction, verify it's not already minted
           if (
             pendingTx.mint &&
@@ -634,6 +662,8 @@ class Blockchain {
     console.log("Rejecting Block...");
     return false;
   }
+
+  tryPackageBlocks() {}
 }
 
 export default Blockchain;

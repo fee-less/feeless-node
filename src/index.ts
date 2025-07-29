@@ -153,6 +153,20 @@ app.get("/balance/:addr", (req, res) => {
   }
 });
 
+app.get("/locked/:addr", (req, res) => {
+  try {
+    res.json(
+      bc.calculateLocked(
+        req.params.addr.split(".")[0],
+        req.params.addr.split(".")[1]
+      )
+    );
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
+
 app.get("/balance-mempool/:addr", (req, res) => {
   try {
     res.json(bc.calculateBalance(req.params.addr.split(".")[0], true, req.params.addr.split(".")[1]));

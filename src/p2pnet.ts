@@ -113,7 +113,6 @@ class P2PNetwork {
       }
     } catch (e) {
       console.error(e);
-      console.log(payload);
     }
   }
 
@@ -134,6 +133,7 @@ class P2PNetwork {
   }
 
   async incomingBlock(block: Block) {
+    console.log(block.hash);
     if (this.bc.blocks[this.bc.blocks.length - 1].hash === block.hash) return false; // Already added
     if (getDiff(this.bc.blocks) < BigInt("0x" + block.hash)) {
       console.log("Block has invalid diff!");

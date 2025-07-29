@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import cluster from "cluster";
 import os from "os";
 import {
@@ -131,7 +129,7 @@ if (cluster.isPrimary) {
     fc.onutx = (tx) => mempool.push(tx);
     fc.onblock = async (block) => {
       diff = await fc.getDiff();
-      bh = await fc.getBlockHeight();
+      bh++;
       reward = calculateReward(bh);
       prevHash = block.hash;
     };
@@ -163,7 +161,6 @@ if (cluster.isPrimary) {
 
     const miningLoop = async () => {
       if (halted) return;
-
       const block: Block = {
         timestamp: Date.now(),
         transactions: [
@@ -171,7 +168,7 @@ if (cluster.isPrimary) {
           {
             sender: "network",
             receiver: DEV_WALLET,
-            amount: FLSStoFPoints(reward * DEV_FEE),
+            amount: Math.round(reward * DEV_FEE),
             signature: "",
             nonce: Math.floor(Math.random() * 1e6),
             timestamp: Date.now(),
@@ -180,7 +177,7 @@ if (cluster.isPrimary) {
             sender: "network",
             receiver: fc.getPublic(),
             amount: !config.token
-              ? FLSStoFPoints(reward * (1 - DEV_FEE))
+              ? Math.round(reward * (1 - DEV_FEE))
               : (await fc.getTokenInfo(config.token)).miningReward,
             signature: "",
             nonce: Math.floor(Math.random() * 1e6),
@@ -214,7 +211,6 @@ if (cluster.isPrimary) {
       block.hash = hash.toString(16);
 
       if (process.send) {
-        console.log("Found @" + bh);
         process.send({ type: "block_found", block });
       }
     };
