@@ -246,6 +246,31 @@ class Blockchain {
         return false;
       }
 
+      if (tx.timestamp > 1754043286413) {
+        const lastNonce = this.lastNonces.get(tx.sender) || 0;
+        if (tx.nonce <= lastNonce) {
+          console.log(
+            "Invalid transaction nonce - must be greater than last used nonce"
+          );
+          return false;
+        }
+
+        const key = ec.keyFromPublic(tx.sender, "hex");
+        if (
+          !key.verify(
+            SHA256(JSON.stringify({ ...tx, signature: "" })).toString(),
+            tx.signature
+          )
+        ) {
+          console.log("Invalid transaction signature.");
+          return false;
+        }
+        if (this.usedSignatures.includes(tx.signature)) {
+          console.log("Transaction signature already used.");
+          return false;
+        }
+      }
+
       // Check if user has enough balance to pay the minting fee
       if (this.calculateBalance(tx.sender, false) < expectedFee) {
         console.log("Insufficient balance to pay minting fee");
