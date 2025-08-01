@@ -76,17 +76,34 @@ if (process.env.PEER_HTTP) {
       syncing = false;
       break;
     }
-    for (let i = localHeight; i < remoteHeight; i++) {
-      const block = await fetch(process.env.PEER_HTTP + "/block/" + i).then(res => res.json());
-      bc.mempool.push(...block.transactions);
-      const ok = await bc.addBlock(block, true);
-      if (!ok) {
-        console.error(`Downloaded block at height ${i} is invalid. Stopping sync.`);
+    const BATCH_SIZE = 500;
+
+    for (let i = localHeight; i < remoteHeight; i += BATCH_SIZE) {
+      const start = i;
+      const end = Math.min(i + BATCH_SIZE, remoteHeight);
+      const blocks = await fetch(
+        `${process.env.PEER_HTTP}/blocks?start=${start}&end=${end}`
+      ).then((res) => res.json());
+
+      if (!Array.isArray(blocks)) {
+        console.error(`Invalid response while syncing blocks ${start}-${end}.`);
         process.exit(1);
       }
-      if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
-      fs.writeFileSync("blockchain/" + i, JSON.stringify(block));
-      process.stdout.write(`\rSynced block ${i + 1}/${remoteHeight}`);
+
+      for (let j = 0; j < blocks.length; j++) {
+        const block = blocks[j];
+        bc.mempool.push(...block.transactions);
+        const ok = await bc.addBlock(block, true);
+        if (!ok) {
+          console.error(
+            `Downloaded block at height ${start + j} is invalid. Stopping sync.`
+          );
+          process.exit(1);
+        }
+        if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
+        fs.writeFileSync(`blockchain/${start + j}`, JSON.stringify(block));
+        process.stdout.write(`\rSynced block ${start + j + 1}/${remoteHeight}`);
+      }
     }
   }
   console.log("\nSync complete.");
@@ -98,6 +115,25 @@ const p2p = new P2PNetwork(process.env.PEER ?? "", parseInt(process.env.PORT ?? 
 app.get("/block/:height", (req, res) => {
   try {
     res.json(bc.blocks[parseInt(req.params.height)]);
+  } catch (e: any) {
+    res.json({ error: e.message });
+    console.log("[ERROR]", e);
+  }
+});
+
+app.get("/blocks", (req, res) => {
+  try {
+    const start = parseInt(req.query.start as string);
+    const end = parseInt(req.query.end as string);
+    if (start > end) {
+      res.status(400);
+      return;
+    }
+    if (end - start > 500) {
+      res.status(400);
+      return;
+    }
+    res.json(bc.blocks.slice(start,end));
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
