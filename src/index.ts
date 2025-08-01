@@ -61,16 +61,11 @@ console.log("Validated local blocks. ")
 // Step 2 & 3: Sync missing blocks from peer
 if (process.env.PEER_HTTP) {
   let syncing = true;
-  let lastRemoteHeight = 0;
-  let lastHeightCheck = 0;
-  const HEIGHT_CHECK_INTERVAL = 5000;
+
   while (syncing) {
-    const now = Date.now();
-    if (now - lastHeightCheck > HEIGHT_CHECK_INTERVAL || lastRemoteHeight === 0) {
-      lastRemoteHeight = (await fetch(process.env.PEER_HTTP + "/height").then(res => res.json())).height;
-      lastHeightCheck = now;
-    }
-    const remoteHeight = lastRemoteHeight;
+    const remoteHeight = (
+      await fetch(process.env.PEER_HTTP + "/height").then((res) => res.json())
+    ).height;
     const localHeight = bc.blocks.length;
     if (localHeight >= remoteHeight) {
       syncing = false;
