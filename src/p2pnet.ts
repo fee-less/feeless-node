@@ -121,7 +121,7 @@ class P2PNetwork {
         fs.writeFileSync("blockchain/" + i, JSON.stringify(block));
       }
 
-      this.bc.mempool = await fetch(process.env.PEER_HTTP + "/").then(res => res.json());
+      this.bc.mempool = await fetch(process.env.PEER_HTTP + "/mempool").then(res => res.json());
 
       console.log(
         `[SYNC] Successfully replaced local chain from height ${startHeight}`

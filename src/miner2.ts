@@ -100,8 +100,8 @@ if (cluster.isPrimary) {
   // Print global hash rate every second
   setInterval(() => {
     const total = Object.values(hashrate).reduce((a, b) => a + b, 0);
-    console.log(
-      `Hashrate: ${total.toLocaleString()} H/s (${
+    process.stdout.write(
+      `\rHashrate: ${total.toLocaleString()} H/s (${
         Object.keys(hashrate).length
       } workers)`
     );
