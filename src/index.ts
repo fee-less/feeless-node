@@ -44,7 +44,7 @@ function loadLocalBlocks() {
       blocks.push(JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8")));
     }
   }
-  if (blocks.length === 0) {
+  if (blocks.length === 0 && !process.env.PEER) {
     blocks.push({
       timestamp: Date.now(),
       transactions: [
