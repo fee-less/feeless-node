@@ -109,6 +109,12 @@ if (process.env.PEER_HTTP) {
 
       for (let j = 0; j < blocks.length; j++) {
         const block = blocks[j];
+        if (i * BATCH_SIZE + j === 0) {
+          if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
+          fs.writeFileSync(`blockchain/${start + j}`, JSON.stringify(block));
+          bc.blocks.push(block);
+          continue;
+        }
         bc.mempool.push(...block.transactions);
         const ok = await bc.addBlock(block, true);
         if (!ok) {
