@@ -1,7 +1,7 @@
 import pkg from 'elliptic';
 const { ec: EC } = pkg;
 import cryptoJS from 'crypto-js';
-import { Block, Transaction, BLOCK_TIME, DEV_WALLET, FLSStoFPoints, calculateReward, DEV_FEE, calculateMintFee, MintedTokens, hashArgon } from "feeless-utils"
+import { Block, Transaction, BLOCK_TIME, DEV_WALLET, FLSStoFPoints, calculateReward, DEV_FEE, calculateMintFee, MintedTokens, hashArgon, getDiff, STARTING_DIFF, TAIL } from "feeless-utils"
 const { SHA256 } = cryptoJS;
 
 const ec = new EC("secp256k1");
@@ -510,6 +510,18 @@ class Blockchain {
   }
 
   async checkBlock(block: Block, isBackchecking = false, skipHashing = false) {
+    if (BigInt(getDiff(this.blocks.slice(-TAIL))) < BigInt("0x" + block.hash)) {
+      console.log("Block has invalid diff!");
+      return false;
+    }
+    if (
+      getDiff(
+        this.blocks.slice(-TAIL)
+      ) !== BigInt("0x" + block.diff)
+    ) {
+      console.log("Block has invalid diff parameter!");
+      return false;
+    }
     // Prevent multiple transactions from the same sender (excluding dev fee and reward txs)
     const seenSenders = new Set<string>();
     for (const tx of block.transactions) {

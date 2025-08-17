@@ -77,6 +77,7 @@ class P2PNetwork {
   }
 
   private async watchDog() {
+    if (!process.env.PEER_HTTP) return;
     try {
       if (
         (await fetch(process.env.PEER_HTTP + "/height")
@@ -195,10 +196,6 @@ class P2PNetwork {
     console.log(block.hash);
     if (this.bc.blocks[this.bc.blocks.length - 1].hash === block.hash)
       return false; // Already added
-    if (getDiff(this.bc.blocks) < BigInt("0x" + block.hash)) {
-      console.log("Block has invalid diff!");
-      return false;
-    }
     const res = await this.bc.addBlock(block);
     if (res) {
       if (!fs.existsSync("blockchain")) {

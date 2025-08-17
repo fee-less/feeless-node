@@ -7,7 +7,6 @@ import {
   DEV_FEE,
   DEV_WALLET,
   FeelessClient,
-  FLSStoFPoints,
   hashArgon,
   Transaction,
 } from "feeless-utils";
@@ -191,6 +190,7 @@ if (cluster.isPrimary) {
         signature: "",
         proposer: fc.getPublic(),
         hash: "",
+        diff: diff.toString(16)
       };
 
       nonce++;

@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 
-console.log("Starting node...")
+console.log("Starting node...");
 
-import { calculateMintFee, calculateReward, FLSStoFPoints, getDiff, Transaction } from "feeless-utils";
+import {
+  Block,
+  calculateMintFee,
+  calculateReward,
+  FLSStoFPoints,
+  getDiff,
+  STARTING_DIFF,
+  TAIL,
+  Transaction,
+} from "feeless-utils";
 import Blockchain from "./blockchain.js";
 import P2PNetwork from "./p2pnet.js";
 import express from "express";
@@ -10,12 +19,14 @@ import { config } from "dotenv";
 import cors from "cors";
 import fs from "fs";
 console.log("Reading config...");
-if (!fs.existsSync(".env")) fs.writeFileSync(".env",
-  `PEER=ws://fee-less.com:6061,ws://fee-less.com:6062
+if (!fs.existsSync(".env"))
+  fs.writeFileSync(
+    ".env",
+    `PEER=ws://fee-less.com:6061,ws://fee-less.com:6062
 PEER_HTTP=http://fee-less.com:8000
 PORT=6061
 HTTP_PORT=8000`
-);
+  );
 console.log("Initializing HTTP API...");
 
 config();
@@ -25,13 +36,22 @@ app.use(cors());
 
 // --- Load local chain from disk ---
 function loadLocalBlocks() {
-  const blocks = [
-    {
+  const blocks: Block[] = [];
+  if (fs.existsSync("blockchain")) {
+    for (const block of fs
+      .readdirSync("blockchain")
+      .sort((a, b) => parseInt(a) - parseInt(b))) {
+      blocks.push(JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8")));
+    }
+  }
+  if (blocks.length === 0) {
+    blocks.push({
       timestamp: Date.now(),
       transactions: [
         {
           sender: "network",
-          receiver: "03bea510ff0689107a3a7b3ff3968e0554672142bbf6fc6db75d01e7aa6620e4f8",
+          receiver:
+            "02b4a4887c88e80d32fd9fd6317bbaac2a28c4070feb6d93f82bbefc52f5b85f13",
           amount: FLSStoFPoints(5000000),
           signature: "network",
           nonce: 0,
@@ -40,24 +60,26 @@ function loadLocalBlocks() {
       ],
       prev_hash: "genesis",
       nonce: 0,
-      signature: "3045022100e057f5f136f3f0e5b837660287db7b696b433c8a56665319a829293526d39814022023d6e513727b6b1de23fa28b9a8dee7efb4d91876cd83f1b3993c83a880f7e1a",
-      proposer: "03bea510ff0689107a3a7b3ff3968e0554672142bbf6fc6db75d01e7aa6620e4f8",
-      hash: "11f0ef7e028354a51d802f85b7da8b46e6bab6d5683af65e0831d0fdaeb7e3",
-    },
-  ];
-  if (fs.existsSync("blockchain")) {
-    for (const block of fs.readdirSync("blockchain").sort((a, b) => parseInt(a) - parseInt(b))) {
-      blocks.push(JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8")));
+      signature:
+        "1",
+      proposer:
+        "02b4a4887c88e80d32fd9fd6317bbaac2a28c4070feb6d93f82bbefc52f5b85f13",
+      hash: "1",
+      diff: STARTING_DIFF.toString(16),
+    });
+    if (!fs.existsSync("blockchain")) {
+      fs.mkdirSync("blockchain");
     }
+    fs.writeFileSync("blockchain/0", JSON.stringify(blocks[0]));
   }
   return blocks;
 }
 
-console.log("Loading local blocks...")
+console.log("Loading local blocks...");
 let blocks = loadLocalBlocks();
 let bc = new Blockchain(blocks);
 await bc.waitForSync();
-console.log("Validated local blocks. ")
+console.log("Validated local blocks. ");
 // Step 2 & 3: Sync missing blocks from peer
 if (process.env.PEER_HTTP) {
   let syncing = true;
@@ -102,10 +124,14 @@ if (process.env.PEER_HTTP) {
     }
   }
   console.log("\nSync complete.");
-};
+}
 
 // Start P2P and API as usual
-const p2p = new P2PNetwork(process.env.PEER ?? "", parseInt(process.env.PORT ?? "6061"), bc);
+const p2p = new P2PNetwork(
+  process.env.PEER ?? "",
+  parseInt(process.env.PORT ?? "6061"),
+  bc
+);
 
 app.get("/block/:height", (req, res) => {
   try {
@@ -128,7 +154,7 @@ app.get("/blocks", (req, res) => {
       res.status(400);
       return;
     }
-    res.json(bc.blocks.slice(start,end));
+    res.json(bc.blocks.slice(start, end));
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -150,7 +176,9 @@ app.get("/mempool", (_, res) => {
 
 app.get("/diff", (_, res) => {
   try {
-    res.json({ diff: getDiff(bc.blocks).toString(16) });
+    res.json({
+      diff: getDiff(bc.blocks.slice(-TAIL)).toString(16),
+    });
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -177,7 +205,13 @@ app.get("/reward", (_, res) => {
 
 app.get("/balance/:addr", (req, res) => {
   try {
-    res.json(bc.calculateBalance(req.params.addr.split(".")[0], false, req.params.addr.split(".")[1]));
+    res.json(
+      bc.calculateBalance(
+        req.params.addr.split(".")[0],
+        false,
+        req.params.addr.split(".")[1]
+      )
+    );
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -200,7 +234,13 @@ app.get("/locked/:addr", (req, res) => {
 
 app.get("/balance-mempool/:addr", (req, res) => {
   try {
-    res.json(bc.calculateBalance(req.params.addr.split(".")[0], true, req.params.addr.split(".")[1]));
+    res.json(
+      bc.calculateBalance(
+        req.params.addr.split(".")[0],
+        true,
+        req.params.addr.split(".")[1]
+      )
+    );
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -216,21 +256,23 @@ app.get("/tokens/:addr", (req, res) => {
           if (!balanceTokens[tx.token]) balanceTokens[tx.token] = 0;
           balanceTokens[tx.token] += tx.amount;
         }
-        if (tx.sender === req.params.addr && tx.token) balanceTokens[tx.token] -= tx.amount;
+        if (tx.sender === req.params.addr && tx.token)
+          balanceTokens[tx.token] -= tx.amount;
       }
     }
     for (const tx of bc.mempool) {
       if (tx.receiver === req.params.addr && tx.token) {
         if (!balanceTokens[tx.token]) balanceTokens[tx.token] = 0;
         balanceTokens[tx.token] += tx.amount;
-    }
-      if (tx.sender === req.params.addr && tx.token) balanceTokens[tx.token] -= tx.amount;
+      }
+      if (tx.sender === req.params.addr && tx.token)
+        balanceTokens[tx.token] -= tx.amount;
     }
     const tokens = [];
     for (const token in balanceTokens) {
       if (balanceTokens[token] > 0) tokens.push(token);
     }
-    res.json(tokens)
+    res.json(tokens);
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -276,11 +318,11 @@ app.get("/history/:addr", (req, res) => {
   try {
     const addr = req.params.addr;
     const history: {
-      type: 'send' | 'receive' | 'mint';
+      type: "send" | "receive" | "mint";
       amount: number;
       token?: string;
       timestamp: number;
-      status: 'confirmed' | 'pending';
+      status: "confirmed" | "pending";
       address: string;
       blockHeight?: number;
     }[] = [];
@@ -291,10 +333,10 @@ app.get("/history/:addr", (req, res) => {
       for (const tx of block.transactions) {
         if (tx.sender === addr || tx.receiver === addr) {
           // Skip network transactions unless they're rewards to this address
-          if (tx.sender === 'network' && tx.receiver !== addr) continue;
+          if (tx.sender === "network" && tx.receiver !== addr) continue;
 
-          const type = tx.sender === addr ? 'send' :
-            tx.mint ? 'mint' : 'receive';
+          const type =
+            tx.sender === addr ? "send" : tx.mint ? "mint" : "receive";
 
           const otherAddress = tx.sender === addr ? tx.receiver : tx.sender;
 
@@ -303,9 +345,9 @@ app.get("/history/:addr", (req, res) => {
             amount: tx.amount,
             token: tx.token,
             timestamp: tx.timestamp,
-            status: 'confirmed',
+            status: "confirmed",
             address: otherAddress,
-            blockHeight: i
+            blockHeight: i,
           });
         }
       }
@@ -314,7 +356,7 @@ app.get("/history/:addr", (req, res) => {
     // Get pending transactions from mempool
     for (const tx of bc.mempool) {
       if (tx.sender === addr || tx.receiver === addr) {
-        const type = tx.sender === addr ? 'send' : 'receive';
+        const type = tx.sender === addr ? "send" : "receive";
         const otherAddress = tx.sender === addr ? tx.receiver : tx.sender;
 
         history.push({
@@ -322,8 +364,8 @@ app.get("/history/:addr", (req, res) => {
           amount: tx.amount,
           token: tx.token,
           timestamp: tx.timestamp,
-          status: 'pending',
-          address: otherAddress
+          status: "pending",
+          address: otherAddress,
         });
       }
     }
@@ -358,13 +400,17 @@ app.get("/search-blocks/:hash", (req, res) => {
 app.get("/search-tx/:query", (req, res) => {
   try {
     const query = req.params.query;
-    const results: { tx: Transaction, blockHeight?: number }[] = [];
+    const results: { tx: Transaction; blockHeight?: number }[] = [];
 
     // Search in blocks
     for (let i = 0; i < bc.blocks.length; i++) {
       const block = bc.blocks[i];
       for (const tx of block.transactions) {
-        if (tx.signature === query || tx.sender === query || tx.receiver === query) {
+        if (
+          tx.signature === query ||
+          tx.sender === query ||
+          tx.receiver === query
+        ) {
           results.push({ tx, blockHeight: i });
         }
       }
@@ -372,7 +418,11 @@ app.get("/search-tx/:query", (req, res) => {
 
     // Search in mempool
     for (const tx of bc.mempool) {
-      if (tx.signature === query || tx.sender === query || tx.receiver === query) {
+      if (
+        tx.signature === query ||
+        tx.sender === query ||
+        tx.receiver === query
+      ) {
         results.push({ tx });
       }
     }
