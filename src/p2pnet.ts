@@ -11,6 +11,7 @@ class P2PNetwork {
   private peerReconnectTimeouts: Map<string, NodeJS.Timeout> = new Map();
   public onBlockReceived?: (block: Block) => void;
   private peerUrls: string[];
+  private isReSyncing = false;
 
   constructor(peer: string, port: number, bc: Blockchain) {
     this.bc = bc;
@@ -46,6 +47,7 @@ class P2PNetwork {
     });
     ws.addEventListener("open", () => {
       console.log("Connected to peer: " + peerUrl);
+      this.startHeartbeat(ws, peerUrl); // start per-connection heartbeat
       const timeout = this.peerReconnectTimeouts.get(peerUrl);
       if (timeout) {
         clearTimeout(timeout);
@@ -58,9 +60,38 @@ class P2PNetwork {
     });
     ws.addEventListener("error", () => {
       console.log("Peer connection error.");
+      console.log("Disconnected from peer: " + peerUrl);
       ws.close(); // Ensure close event fires
     });
     return ws;
+  }
+
+  private startHeartbeat(ws: WebSocket, peerUrl: string) {
+    let isAlive = true;
+
+    ws.on("pong", () => {
+      isAlive = true;
+    });
+
+    const interval = setInterval(() => {
+      if (!isAlive) {
+        console.log(`[HEARTBEAT] Peer ${peerUrl} not responding, closing...`);
+        clearInterval(interval);
+        ws.terminate(); // forces "close" -> triggers reconnect
+        return;
+      }
+
+      isAlive = false;
+      try {
+        ws.ping();
+      } catch (err) {
+        console.log(`[HEARTBEAT] Failed to ping ${peerUrl}`, err);
+        ws.terminate();
+      }
+    }, 10000); // every 10s
+
+    ws.on("close", () => clearInterval(interval));
+    ws.on("error", () => clearInterval(interval));
   }
 
   private async scheduleReconnect(peerUrl: string) {
@@ -77,36 +108,45 @@ class P2PNetwork {
   }
 
   private async watchDog() {
-    if (!process.env.PEER_HTTP) return;
+    if (!process.env.PEER_HTTP || this.isReSyncing) return;
     try {
       if (
         (await fetch(process.env.PEER_HTTP + "/height")
           .then((res) => res.json())
-          .then((d) => d.height)) === this.bc.blocks.length
+          .then((d) => d.height)) === this.bc.height
       )
         return;
       const forkPoint = await this.findForkPoint();
       console.warn(
         `[FORK] Fork detected. Replacing chain from height ${forkPoint}`
       );
+      this.isReSyncing = true;
       await this.replacePartialChainFromPeer(forkPoint);
+      this.isReSyncing = false;
     } catch (e: any) {
       console.error("[WATCHDOG] FAILED", e);
     }
   }
 
-  private async replacePartialChainFromPeer(startHeight: number) {
+  private async replacePartialChainFromPeer(
+    startHeight: number
+  ): Promise<void> {
     try {
-      const remoteHeight = await fetch(`${process.env.PEER_HTTP}/height`)
+      const remoteHeight: number = await fetch(
+        `${process.env.PEER_HTTP}/height`
+      )
         .then((res) => res.json())
         .then((d) => d.height);
 
-      this.bc.blocks = this.bc.blocks.slice(0, startHeight);
+      console.log(
+        `[SYNC] Starting from height ${startHeight}, remote height = ${remoteHeight}`
+      );
 
       for (let i = startHeight; i < remoteHeight; i++) {
         const block = await fetch(`${process.env.PEER_HTTP}/block/${i}`)
           .then((res) => res.json())
           .catch(() => null);
+
         if (!block) {
           console.warn(`[SYNC] Failed to fetch block ${i}. Aborting.`);
           return;
@@ -118,13 +158,26 @@ class P2PNetwork {
           console.log("[SYNC] INVALID BLOCK RE-SYNCED!");
           return;
         }
-        fs.writeFileSync("blockchain/" + i, JSON.stringify(block));
+
+        this.bc.height = i + 1; // update only when block is valid
+        fs.writeFileSync(`blockchain/${i}`, JSON.stringify(block));
       }
 
-      this.bc.mempool = await fetch(process.env.PEER_HTTP + "/mempool").then(res => res.json());
+      // Ensure local mempool matches peer
+      this.bc.mempool = await fetch(`${process.env.PEER_HTTP}/mempool`).then(
+        (res) => res.json()
+      );
+
+      // Final consistency check
+      if (this.bc.height !== remoteHeight) {
+        console.warn(
+          `[SYNC] Local height ${this.bc.height} != remote height ${remoteHeight}, retrying...`
+        );
+        return this.replacePartialChainFromPeer(this.bc.height); // recursive retry
+      }
 
       console.log(
-        `[SYNC] Successfully replaced local chain from height ${startHeight}`
+        `[SYNC] Successfully replaced local chain up to height ${remoteHeight}`
       );
     } catch (e) {
       console.error("[SYNC ERROR]", e);
@@ -136,7 +189,7 @@ class P2PNetwork {
       .then((res) => res.json())
       .then((d) => d.height);
 
-    const minHeight = Math.min(this.bc.blocks.length, remoteHeight);
+    const minHeight = Math.min(this.bc.height, remoteHeight);
 
     for (let i = minHeight - 1; i >= 0; i--) {
       const remoteBlock = await fetch(`${process.env.PEER_HTTP}/block/${i}`)
@@ -144,7 +197,7 @@ class P2PNetwork {
         .catch(() => null);
       if (!remoteBlock) break;
 
-      const localBlock = this.bc.blocks[i];
+      const localBlock = this.bc.getBlock(i);
       if (remoteBlock.hash === localBlock.hash) {
         return i + 1; // First divergent block
       }
@@ -158,10 +211,7 @@ class P2PNetwork {
       if (payload.event === "tx") {
         if (this.incomingTX(payload.data as Transaction)) this.toPeers(payload);
       } else if (payload.event === "block") {
-        if (
-          payload.data.hash === this.bc.blocks[this.bc.blocks.length - 1].hash
-        )
-          return;
+        if (payload.data.hash === this.bc.lastBlock) return;
         if (this.onBlockReceived) this.onBlockReceived(payload.data as Block);
         if (await this.incomingBlock(payload.data as Block))
           this.toPeers(payload);
@@ -193,17 +243,15 @@ class P2PNetwork {
   }
 
   async incomingBlock(block: Block) {
-    console.log(block.hash);
-    if (this.bc.blocks[this.bc.blocks.length - 1].hash === block.hash)
-      return false; // Already added
+    if (this.bc.lastBlock === block.hash) return false; // Already added
     const res = await this.bc.addBlock(block);
     if (res) {
       if (!fs.existsSync("blockchain")) {
         fs.mkdirSync("blockchain");
       }
       fs.writeFileSync(
-        "blockchain/" + (this.bc.blocks.length - 1),
-        JSON.stringify(this.bc.blocks[this.bc.blocks.length - 1])
+        "blockchain/" + (this.bc.height - 1),
+        JSON.stringify(block)
       );
       onBlock(block);
       for (const tx of block.transactions) {

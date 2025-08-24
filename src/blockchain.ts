@@ -1,18 +1,39 @@
-import pkg from 'elliptic';
+import pkg from "elliptic";
+import fs from "fs";
 const { ec: EC } = pkg;
-import cryptoJS from 'crypto-js';
-import { Block, Transaction, BLOCK_TIME, DEV_WALLET, FLSStoFPoints, calculateReward, DEV_FEE, calculateMintFee, MintedTokens, hashArgon, getDiff, STARTING_DIFF, TAIL } from "feeless-utils"
+import cryptoJS from "crypto-js";
+import {
+  Block,
+  Transaction,
+  BLOCK_TIME,
+  DEV_WALLET,
+  calculateReward,
+  DEV_FEE,
+  calculateMintFee,
+  MintedTokens,
+  hashArgon,
+  getDiff,
+  TAIL,
+} from "feeless-utils";
 const { SHA256 } = cryptoJS;
 
 const ec = new EC("secp256k1");
 
 class Blockchain {
-  public blocks: Block[] = [];
   public mempool: Transaction[] = [];
   public mintedTokens: MintedTokens = new Map(); // Track minted tokens and their mining rules
   public onSynced: () => void = () => {};
+  public height: number = 0;
+  public lastBlock: string = "";
   private usedSignatures: string[] = [];
   private lastNonces: Map<string, number> = new Map(); // Track last nonce for each address
+  private balances: Map<string, number> = new Map(); // Track balances for each address
+  private lockedBalances: {
+    amount: number;
+    unlock: number;
+    addr: string;
+    token?: string;
+  }[] = []; // Track balances for each address
   private readonly MAX_USED_SIGNATURES = 100000; // Keep last 100k signatures
   private _syncPromise: Promise<void> | null = null;
   private _syncResolve: (() => void) | null = null;
@@ -26,7 +47,29 @@ class Blockchain {
       let genesis = true;
       for (const block of blocks) {
         if (genesis) {
-          this.blocks.push(block);
+          for (const tx of block.transactions) {
+            const receiver = this.calculateBalance(
+              tx.receiver,
+              false,
+              tx.token
+            );
+
+            if (tx.unlock && tx.unlock > block.timestamp) {
+              this.lockedBalances.push({
+                amount: tx.amount,
+                unlock: tx.unlock,
+                addr: tx.receiver,
+              });
+              continue;
+            }
+
+            this.balances.set(
+              tx.receiver + (tx.token ? "." + tx.token : ""),
+              receiver + tx.amount
+            );
+          }
+          this.height++;
+          this.lastBlock = block.hash;
           genesis = false;
           continue;
         }
@@ -70,47 +113,17 @@ class Blockchain {
         if (tx.sender === addr) bal -= tx.amount;
       }
     }
-    // Then check confirmed blocks
-    for (const block of this.blocks) {
-      for (const tx of block.transactions) {
-        if (token || tx.token) {
-          if (
-            tx.receiver === addr &&
-            tx.token === token &&
-            (!tx.unlock || tx.unlock < Date.now())
-          )
-            bal += tx.amount;
-          if (tx.sender === addr && tx.token === token) bal -= tx.amount;
-          continue;
-        }
-        if (tx.receiver === addr && (!tx.unlock || tx.unlock < Date.now()))
-          bal += tx.amount;
-        if (tx.sender === addr) bal -= tx.amount;
-      }
-    }
+    // Then
+    bal +=
+      this.balances.get(addr + (token ? "." + token.toUpperCase() : "")) ?? 0;
     return bal;
   }
 
-  calculateLocked(
-    addr: string,
-    token?: string
-  ) {
+  calculateLocked(addr: string, token?: string) {
     let bal = 0;
-    // Then check confirmed blocks
-    for (const block of this.blocks) {
-      for (const tx of block.transactions) {
-        if (token || tx.token) {
-          if (
-            tx.receiver === addr &&
-            tx.token === token &&
-            tx.unlock &&
-            tx.unlock >= Date.now()
-          ) bal += tx.amount;
-          continue;
-        }
-        if (tx.receiver === addr && tx.unlock && tx.unlock >= Date.now()) bal += tx.amount;
-      }
-    }
+    this.lockedBalances.forEach((lb) => {
+      if (lb.addr === addr && lb.token === token) bal + lb.amount;
+    });
     return bal;
   }
 
@@ -176,7 +189,7 @@ class Blockchain {
             pendingTx.mint &&
             pendingTx.receiver === DEV_WALLET &&
             pendingTx.amount ===
-              calculateMintFee(this.blocks.length, this.mintedTokens.size) &&
+              calculateMintFee(this.height, this.mintedTokens.size) &&
             pendingTx.mint.token === tx.token
           ) {
             if (tx.unlock) {
@@ -188,19 +201,9 @@ class Blockchain {
               console.log("Invalid airdrop amount");
               return false;
             }
-            // Check if airdrop was already claimed in previous blocks
-            for (const block of this.blocks) {
-              for (const btx of block.transactions) {
-                if (
-                  btx.sender === "mint" &&
-                  btx.signature === "mint" &&
-                  btx.token === tx.token &&
-                  btx.amount === pendingTx.mint.airdrop
-                ) {
-                  console.log("Airdrop was already claimed");
-                  return false;
-                }
-              }
+            if (this.mintedTokens.has(tx.token)) {
+              console.log("Airdrop not claimed at token mint");
+              return false;
             }
             return true;
           }
@@ -215,31 +218,17 @@ class Blockchain {
         return false;
       }
 
-      // Check if airdrop was already claimed in previous blocks
-      for (const block of this.blocks) {
-        for (const btx of block.transactions) {
-          if (
-            btx.sender === "mint" &&
-            btx.signature === "mint" &&
-            btx.token === tx.token &&
-            btx.amount === tokenInfo.airdrop
-          ) {
-            console.log("Airdrop was already claimed");
-            return false;
-          }
-        }
-      }
-
       return true;
     }
 
     // Handle minting transaction
     if (tx.mint) {
-      const expectedFee = calculateMintFee(
-        this.blocks.length,
-        this.mintedTokens.size
-      );
-      if (tx.receiver !== DEV_WALLET || tx.amount !== expectedFee || tx.unlock) {
+      const expectedFee = calculateMintFee(this.height, this.mintedTokens.size);
+      if (
+        tx.receiver !== DEV_WALLET ||
+        tx.amount !== expectedFee ||
+        tx.unlock
+      ) {
         console.log(
           `Invalid minting transaction - must be sent to ${DEV_WALLET} with fee ${expectedFee}, got: ${tx.amount} ${tx.receiver}`
         );
@@ -247,11 +236,8 @@ class Blockchain {
       }
 
       if (tx.timestamp > 1754043286413) {
-        const lastNonce = this.lastNonces.get(tx.sender) || 0;
-        if (tx.nonce <= lastNonce) {
-          console.log(
-            "Invalid transaction nonce - must be greater than last used nonce"
-          );
+        if (this.lastNonces.has(tx.nonce + "")) {
+          console.log("Invalid transaction nonce");
           return false;
         }
 
@@ -385,7 +371,7 @@ class Blockchain {
     for (const tx of block.transactions) {
       if (tx.mint && tx.receiver === DEV_WALLET) {
         const expectedFee = calculateMintFee(
-          this.blocks.length,
+          this.height,
           this.mintedTokens.size
         );
         if (tx.amount === expectedFee) {
@@ -447,7 +433,7 @@ class Blockchain {
           // FLSS reward validation
           if (
             tx.amount !==
-            Math.round(calculateReward(this.blocks.length) * (1 - DEV_FEE))
+            Math.round(calculateReward(this.height) * (1 - DEV_FEE))
           ) {
             console.log(`Invalid FLSS reward amount: ${tx.amount}`);
             return { isValid: false, hasDevFee, hasReward };
@@ -475,20 +461,6 @@ class Blockchain {
           console.log("Invalid airdrop amount");
           return { isValid: false, hasDevFee, hasReward };
         }
-        // Check if airdrop was already claimed in previous blocks
-        for (const b of this.blocks) {
-          for (const btx of b.transactions) {
-            if (
-              btx.sender === "mint" &&
-              btx.signature === "mint" &&
-              btx.token === tx.token &&
-              btx.amount === tokenInfo.airdrop
-            ) {
-              console.log("Airdrop was already claimed");
-              return { isValid: false, hasDevFee, hasReward };
-            }
-          }
-        }
         // Check if airdrop was already claimed in this block (before this tx)
         for (const btx of block.transactions) {
           if (btx === tx) break; // Stop when we reach current tx
@@ -510,15 +482,11 @@ class Blockchain {
   }
 
   async checkBlock(block: Block, isBackchecking = false, skipHashing = false) {
-    if (BigInt(getDiff(this.blocks.slice(-TAIL))) < BigInt("0x" + block.hash)) {
+    if (BigInt(getDiff(this.getTail())) < BigInt("0x" + block.hash)) {
       console.log("Block has invalid diff!");
       return false;
     }
-    if (
-      getDiff(
-        this.blocks.slice(-TAIL)
-      ) !== BigInt("0x" + block.diff)
-    ) {
+    if (getDiff(this.getTail()) !== BigInt("0x" + block.diff)) {
       console.log("Block has invalid diff parameter!");
       return false;
     }
@@ -578,10 +546,7 @@ class Blockchain {
     }
 
     // Check if the previous hash in the current block matches the hash of the previous block
-    if (
-      this.blocks.length > 0 &&
-      block.prev_hash !== this.blocks[this.blocks.length - 1].hash
-    ) {
+    if (this.height > 0 && block.prev_hash !== this.lastBlock) {
       console.log("Previous block hash is invalid.");
       return false;
     }
@@ -631,7 +596,7 @@ class Blockchain {
             pendingTx.mint &&
             pendingTx.receiver === DEV_WALLET &&
             pendingTx.amount ===
-              calculateMintFee(this.blocks.length, this.mintedTokens.size)
+              calculateMintFee(this.height, this.mintedTokens.size)
           ) {
             if (this.mintedTokens.has(pendingTx.mint.token)) {
               console.log(
@@ -654,6 +619,16 @@ class Blockchain {
   }
 
   async addBlock(block: Block, isBackchecking = false, skipHashing = false) {
+    for (const lb of this.lockedBalances) {
+      if (lb.unlock <= block.timestamp) {
+        const receiver = this.calculateBalance(lb.addr, false, lb.token);
+        this.balances.set(
+          lb.addr + (lb.token ? "." + lb.token : ""),
+          receiver + lb.amount
+        );
+      }
+    }
+
     if (await this.checkBlock(block, isBackchecking, skipHashing)) {
       // Update mintedTokens for any mint transactions in this block
       for (const tx of block.transactions) {
@@ -663,9 +638,34 @@ class Blockchain {
             airdrop: tx.mint.airdrop,
           });
         }
+        // Update balances map
+        const sender = this.calculateBalance(tx.sender, false, tx.token);
+        const receiver = this.calculateBalance(tx.receiver, false, tx.token);
+
+        this.balances.set(
+          tx.sender + (tx.token ? "." + tx.token : ""),
+          sender - tx.amount
+        );
+        if (sender - tx.amount === 0)
+          this.balances.delete(tx.sender + (tx.token ? "." + tx.token : ""));
+
+        if (tx.unlock && tx.unlock > block.timestamp) {
+          this.lockedBalances.push({
+            amount: tx.amount,
+            unlock: tx.unlock,
+            addr: tx.receiver,
+          });
+          continue;
+        }
+
+        this.balances.set(
+          tx.receiver + (tx.token ? "." + tx.token : ""),
+          receiver + tx.amount
+        );
       }
 
-      this.blocks.push(block);
+      this.height++;
+      this.lastBlock = block.hash;
 
       // Add new signatures and cleanup old ones
       this.usedSignatures.push(...block.transactions.map((tx) => tx.signature));
@@ -690,17 +690,28 @@ class Blockchain {
         }
       }
       if (isBackchecking) return true;
-      console.log(`Added new block!\n${JSON.stringify(block, null, 2)}`);
-      console.log(
-        `Still have ${this.mempool.length} transactions in mempool to mine...`
-      );
+      process.stdout.write(`\rAdded new block! Height: ${this.height}`);
       return true;
     }
     console.log("Rejecting Block...");
     return false;
   }
 
-  tryPackageBlocks() {}
+  getTail() {
+    return this.getSlice(Math.max(this.height - TAIL, 0), this.height);
+  }
+
+  getSlice(start: number, end: number) {
+    const blocks: Block[] = [];
+    for (let i = start; i < end; i++) {
+      blocks.push(this.getBlock(i));
+    }
+    return blocks;
+  }
+
+  getBlock(h: number): Block {
+    return JSON.parse(fs.readFileSync("blockchain/" + h, "utf-8")) as Block;
+  }
 }
 
 export default Blockchain;

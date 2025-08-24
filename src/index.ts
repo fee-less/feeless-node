@@ -60,8 +60,7 @@ function loadLocalBlocks() {
       ],
       prev_hash: "genesis",
       nonce: 0,
-      signature:
-        "1",
+      signature: "1",
       proposer:
         "02b4a4887c88e80d32fd9fd6317bbaac2a28c4070feb6d93f82bbefc52f5b85f13",
       hash: "1",
@@ -88,7 +87,7 @@ if (process.env.PEER_HTTP) {
     const remoteHeight = (
       await fetch(process.env.PEER_HTTP + "/height").then((res) => res.json())
     ).height;
-    const localHeight = bc.blocks.length;
+    const localHeight = bc.height;
     if (localHeight >= remoteHeight) {
       syncing = false;
       break;
@@ -108,11 +107,13 @@ if (process.env.PEER_HTTP) {
       }
 
       for (let j = 0; j < blocks.length; j++) {
-        const block = blocks[j];
+        const block = blocks[j] as Block;
         if (i * BATCH_SIZE + j === 0) {
+          // genesis block sync
           if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
           fs.writeFileSync(`blockchain/${start + j}`, JSON.stringify(block));
-          bc.blocks.push(block);
+          bc.lastBlock = block.hash;
+          bc.height++;
           continue;
         }
         bc.mempool.push(...block.transactions);
@@ -144,7 +145,7 @@ const p2p = new P2PNetwork(
 
 app.get("/block/:height", (req, res) => {
   try {
-    res.json(bc.blocks[parseInt(req.params.height)]);
+    res.json(bc.getBlock(parseInt(req.params.height)));
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -163,7 +164,7 @@ app.get("/blocks", (req, res) => {
       res.status(400);
       return;
     }
-    res.json(bc.blocks.slice(start, end));
+    res.json(bc.getSlice(start, end));
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -172,7 +173,7 @@ app.get("/blocks", (req, res) => {
 
 app.get("/height", (_, res) => {
   try {
-    res.json({ height: bc.blocks.length });
+    res.json({ height: bc.height });
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -186,7 +187,7 @@ app.get("/mempool", (_, res) => {
 app.get("/diff", (_, res) => {
   try {
     res.json({
-      diff: getDiff(bc.blocks.slice(-TAIL)).toString(16),
+      diff: getDiff(bc.getTail()).toString(16),
     });
   } catch (e: any) {
     res.json({ error: e.message });
@@ -196,7 +197,7 @@ app.get("/diff", (_, res) => {
 
 app.get("/mint-fee", (_, res) => {
   try {
-    res.json({ fee: calculateMintFee(bc.blocks.length, bc.mintedTokens.size) });
+    res.json({ fee: calculateMintFee(bc.height, bc.mintedTokens.size) });
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -205,7 +206,7 @@ app.get("/mint-fee", (_, res) => {
 
 app.get("/reward", (_, res) => {
   try {
-    res.json({ reward: calculateReward(bc.blocks.length) });
+    res.json({ reward: calculateReward(bc.height) });
   } catch (e: any) {
     res.json({ error: e.message });
     console.log("[ERROR]", e);
@@ -258,28 +259,10 @@ app.get("/balance-mempool/:addr", (req, res) => {
 
 app.get("/tokens/:addr", (req, res) => {
   try {
-    const balanceTokens: Record<string, number> = {};
-    for (const block of bc.blocks) {
-      for (const tx of block.transactions) {
-        if (tx.receiver === req.params.addr && tx.token) {
-          if (!balanceTokens[tx.token]) balanceTokens[tx.token] = 0;
-          balanceTokens[tx.token] += tx.amount;
-        }
-        if (tx.sender === req.params.addr && tx.token)
-          balanceTokens[tx.token] -= tx.amount;
-      }
-    }
-    for (const tx of bc.mempool) {
-      if (tx.receiver === req.params.addr && tx.token) {
-        if (!balanceTokens[tx.token]) balanceTokens[tx.token] = 0;
-        balanceTokens[tx.token] += tx.amount;
-      }
-      if (tx.sender === req.params.addr && tx.token)
-        balanceTokens[tx.token] -= tx.amount;
-    }
-    const tokens = [];
-    for (const token in balanceTokens) {
-      if (balanceTokens[token] > 0) tokens.push(token);
+    const tokens: string[] = [];
+    for (const token of bc.mintedTokens) {
+      if (bc.calculateBalance(req.params.addr, true, token[0]) !== 0)
+        tokens.push(token[0]);
     }
     res.json(tokens);
   } catch (e: any) {
@@ -337,8 +320,8 @@ app.get("/history/:addr", (req, res) => {
     }[] = [];
 
     // Get confirmed transactions from blocks
-    for (let i = 0; i < bc.blocks.length; i++) {
-      const block = bc.blocks[i];
+    for (let i = 0; i < bc.height; i++) {
+      const block = bc.getBlock(i);
       for (const tx of block.transactions) {
         if (tx.sender === addr || tx.receiver === addr) {
           // Skip network transactions unless they're rewards to this address
@@ -393,9 +376,9 @@ app.get("/search-blocks/:hash", (req, res) => {
   try {
     const hash = req.params.hash;
     // Search through blocks to find matching hash
-    for (let i = 0; i < bc.blocks.length; i++) {
-      if (bc.blocks[i].hash === hash) {
-        res.json({ block: bc.blocks[i], height: i });
+    for (let i = 0; i < bc.height; i++) {
+      if (bc.getBlock(i).hash === hash) {
+        res.json({ block: bc.getBlock(i), height: i });
         return;
       }
     }
@@ -412,8 +395,8 @@ app.get("/search-tx/:query", (req, res) => {
     const results: { tx: Transaction; blockHeight?: number }[] = [];
 
     // Search in blocks
-    for (let i = 0; i < bc.blocks.length; i++) {
-      const block = bc.blocks[i];
+    for (let i = 0; i < bc.height; i++) {
+      const block = bc.getBlock(i);
       for (const tx of block.transactions) {
         if (
           tx.signature === query ||
