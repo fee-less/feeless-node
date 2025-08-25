@@ -130,9 +130,9 @@ if (process.env.PEER_HTTP) {
       }
     }
   }
-  bc.mempool = await fetch(process.env.PEER_HTTP + "/mempool").then((res) =>
+  (await fetch(process.env.PEER_HTTP + "/mempool").then((res) =>
     res.json()
-  );
+  )).forEach((tx: Transaction) => bc.pushTX(tx));
   console.log("\nSync complete.");
 }
 

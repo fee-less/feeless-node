@@ -171,7 +171,7 @@ class Blockchain {
 
   checkTX(
     tx: Transaction,
-    ignoreMempoolBalance = true,
+    includeMempoolBalance = false,
     isBlockValidation = false
   ) {
     if (!Number.isInteger(tx.amount) || tx.amount <= 0) {
@@ -351,7 +351,7 @@ class Blockchain {
         return false;
       }
       if (
-        this.calculateBalance(tx.sender, ignoreMempoolBalance, tx.token) <
+        this.calculateBalance(tx.sender, includeMempoolBalance, tx.token) <
         tx.amount
       ) {
         console.log("Insufficient balance.");

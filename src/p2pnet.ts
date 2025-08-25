@@ -153,7 +153,7 @@ class P2PNetwork {
           return;
         }
 
-        this.bc.mempool.push(...block.transactions);
+        (block.transactions as Transaction[]).forEach(tx => this.bc.pushTX(tx));
         const ok = await this.bc.addBlock(block, true);
         if (!ok) {
           console.log("[SYNC] INVALID BLOCK RE-SYNCED!");
@@ -165,9 +165,9 @@ class P2PNetwork {
       }
 
       // Ensure local mempool matches peer
-      this.bc.mempool = await fetch(`${process.env.PEER_HTTP}/mempool`).then(
+      (await fetch(`${process.env.PEER_HTTP}/mempool`).then(
         (res) => res.json()
-      );
+      ) as Transaction[]).forEach(tx => this.bc.pushTX(tx));
 
       // Final consistency check
       if (this.bc.height !== remoteHeight) {
