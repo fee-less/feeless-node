@@ -48,11 +48,22 @@ class Blockchain {
       for (const block of blocks) {
         if (genesis) {
           for (const tx of block.transactions) {
+            // Update balances map
+            const sender = this.calculateBalance(tx.sender, false, tx.token);
             const receiver = this.calculateBalance(
               tx.receiver,
               false,
               tx.token
             );
+
+            this.balances.set(
+              tx.sender + (tx.token ? "." + tx.token : ""),
+              sender - tx.amount
+            );
+            if (sender - tx.amount === 0)
+              this.balances.delete(
+                tx.sender + (tx.token ? "." + tx.token : "")
+              );
 
             if (tx.unlock && tx.unlock > block.timestamp) {
               this.lockedBalances.push({

@@ -12,6 +12,7 @@ class P2PNetwork {
   public onBlockReceived?: (block: Block) => void;
   private peerUrls: string[];
   private isReSyncing = false;
+  private lastSeenBlock = "";
 
   constructor(peer: string, port: number, bc: Blockchain) {
     this.bc = bc;
@@ -243,7 +244,8 @@ class P2PNetwork {
   }
 
   async incomingBlock(block: Block) {
-    if (this.bc.lastBlock === block.hash) return false; // Already added
+    if (this.bc.lastBlock === block.hash || this.lastSeenBlock === block.hash) return false; // Already added
+    this.lastSeenBlock = block.hash;
     const res = await this.bc.addBlock(block);
     if (res) {
       if (!fs.existsSync("blockchain")) {
