@@ -495,6 +495,7 @@ class Blockchain {
   async checkBlock(block: Block, isBackchecking = false, skipHashing = false) {
     if (BigInt(getDiff(this.getTail())) < BigInt("0x" + block.hash)) {
       console.log("Block has invalid diff!");
+      console.log("bh", block.hash, "lh", this.lastBlock);
       return false;
     }
     if (getDiff(this.getTail()) !== BigInt("0x" + block.diff)) {
@@ -637,6 +638,7 @@ class Blockchain {
           lb.addr + (lb.token ? "." + lb.token : ""),
           receiver + lb.amount
         );
+        this.lockedBalances = this.lockedBalances.filter(lb_ => lb_ !== lb);
       }
     }
 
@@ -650,29 +652,28 @@ class Blockchain {
           });
         }
         // Update balances map
-        const sender = this.calculateBalance(tx.sender, false, tx.token);
-        const receiver = this.calculateBalance(tx.receiver, false, tx.token);
+        const senderKey = tx.sender + (tx.token ? "." + tx.token : "");
+        const receiverKey = tx.receiver + (tx.token ? "." + tx.token : "");
 
-        this.balances.set(
-          tx.sender + (tx.token ? "." + tx.token : ""),
-          sender - tx.amount
-        );
-        if (sender - tx.amount === 0)
-          this.balances.delete(tx.sender + (tx.token ? "." + tx.token : ""));
+        const senderBal = this.balances.get(senderKey) ?? 0;
+        const receiverBal = this.balances.get(receiverKey) ?? 0;
+
+        this.balances.set(senderKey, senderBal - tx.amount);
+        if (senderBal - tx.amount === 0) {
+          this.balances.delete(senderKey);
+        }
 
         if (tx.unlock && tx.unlock > block.timestamp) {
           this.lockedBalances.push({
             amount: tx.amount,
             unlock: tx.unlock,
             addr: tx.receiver,
+            token: tx.token,
           });
           continue;
         }
 
-        this.balances.set(
-          tx.receiver + (tx.token ? "." + tx.token : ""),
-          receiver + tx.amount
-        );
+        this.balances.set(receiverKey, receiverBal + tx.amount);
       }
 
       this.height++;
