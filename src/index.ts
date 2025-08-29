@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-console.log("Starting node...");
+console.log(`\x1b[36m[NODE]\x1b[0m Starting Feeless node...`);
 
 import {
   Block,
@@ -18,16 +18,18 @@ import express from "express";
 import { config } from "dotenv";
 import cors from "cors";
 import fs from "fs";
-console.log("Reading config...");
-if (!fs.existsSync(".env"))
-  fs.writeFileSync(
-    ".env",
-    `PEER=ws://fee-less.com:6061,ws://fee-less.com:6062
+
+console.log(`\x1b[36m[NODE]\x1b[0m Reading configuration...`);
+if (!fs.existsSync(".env")) {
+  const defaultConfig = `PEER=ws://fee-less.com:6061,ws://fee-less.com:6062
 PEER_HTTP=http://fee-less.com:8000
 PORT=6061
-HTTP_PORT=8000`
-  );
-console.log("Initializing HTTP API...");
+HTTP_PORT=8000`;
+  fs.writeFileSync(".env", defaultConfig);
+  console.log(`\x1b[32m[NODE]\x1b[0m Created default .env configuration file`);
+}
+
+console.log(`\x1b[36m[NODE]\x1b[0m Initializing HTTP API server...`);
 
 config();
 
@@ -38,14 +40,34 @@ app.use(cors());
 function loadLocalBlocks() {
   const blocks: Block[] = [];
   if (fs.existsSync("blockchain")) {
-    for (const block of fs
+    const blockFiles = fs
       .readdirSync("blockchain")
-      .sort((a, b) => parseInt(a) - parseInt(b))) {
-      blocks.push(JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8")));
+      .sort((a, b) => parseInt(a) - parseInt(b));
+
+    console.log(
+      `\x1b[36m[NODE]\x1b[0m Found ${blockFiles.length} local blocks to load`
+    );
+
+    for (const block of blockFiles) {
+      try {
+        blocks.push(
+          JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8"))
+        );
+      } catch (error: any) {
+        console.error(
+          `\x1b[31m[NODE]\x1b[0m Failed to load block ${block}: ${error.message}`
+        );
+        throw error;
+      }
     }
   }
+
   if (blocks.length === 0 && !process.env.PEER) {
-    blocks.push({
+    console.log(
+      `\x1b[33m[NODE]\x1b[0m No local blocks found and no peers configured - creating genesis block`
+    );
+
+    const genesisBlock: Block = {
       timestamp: Date.now(),
       transactions: [
         {
@@ -65,90 +87,188 @@ function loadLocalBlocks() {
         "02b4a4887c88e80d32fd9fd6317bbaac2a28c4070feb6d93f82bbefc52f5b85f13",
       hash: "1",
       diff: STARTING_DIFF.toString(16),
-    });
+    };
+
+    blocks.push(genesisBlock);
+
     if (!fs.existsSync("blockchain")) {
       fs.mkdirSync("blockchain");
     }
-    fs.writeFileSync("blockchain/0", JSON.stringify(blocks[0]));
+    fs.writeFileSync("blockchain/0", JSON.stringify(genesisBlock));
+    console.log(`\x1b[32m[NODE]\x1b[0m Genesis block created and saved`);
   }
+
   return blocks;
 }
 
-console.log("Loading local blocks...");
+console.log(`\x1b[36m[NODE]\x1b[0m Loading local blockchain...`);
 let blocks = loadLocalBlocks();
 let bc = new Blockchain(blocks);
 await bc.waitForSync();
-console.log("Validated local blocks. ");
+console.log(
+  `\x1b[32m[NODE]\x1b[0m Local blockchain validated - Height: ${bc.height}`
+);
+
 // Step 2 & 3: Sync missing blocks from peer
 if (process.env.PEER_HTTP) {
+  console.log(
+    `\x1b[36m[NODE]\x1b[0m Checking for blockchain updates from peer: ${process.env.PEER_HTTP}`
+  );
   let syncing = true;
 
   while (syncing) {
-    const remoteHeight = (
-      await fetch(process.env.PEER_HTTP + "/height").then((res) => res.json())
-    ).height;
-    const localHeight = bc.height;
-    if (localHeight >= remoteHeight) {
-      syncing = false;
-      break;
-    }
-    const BATCH_SIZE = 500;
-
-    for (let i = localHeight; i < remoteHeight; i += BATCH_SIZE) {
-      const start = i;
-      const end = Math.min(i + BATCH_SIZE, remoteHeight);
-      const blocks = await fetch(
-        `${process.env.PEER_HTTP}/blocks?start=${start}&end=${end}`
-      ).then((res) => res.json());
-
-      if (!Array.isArray(blocks)) {
-        console.error(`Invalid response while syncing blocks ${start}-${end}.`);
-        process.exit(1);
+    try {
+      const remoteResponse = await fetch(process.env.PEER_HTTP + "/height");
+      if (!remoteResponse.ok) {
+        throw new Error(
+          `HTTP ${remoteResponse.status}: ${remoteResponse.statusText}`
+        );
       }
 
-      for (let j = 0; j < blocks.length; j++) {
-        const block = blocks[j] as Block;
-        if (i * BATCH_SIZE + j === 0) {
-          // genesis block sync
-          if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
-          fs.writeFileSync(`blockchain/${start + j}`, JSON.stringify(block));
-          bc.lastBlock = block.hash;
-          bc.height++;
-          continue;
+      const remoteData = await remoteResponse.json();
+      const remoteHeight = remoteData.height;
+      const localHeight = bc.height;
+
+      console.log(
+        `\x1b[36m[NODE]\x1b[0m Remote height: ${remoteHeight}, Local height: ${localHeight}`
+      );
+
+      if (localHeight >= remoteHeight) {
+        console.log(`\x1b[32m[NODE]\x1b[0m Local blockchain is up to date`);
+        syncing = false;
+        break;
+      }
+
+      console.log(
+        `\x1b[33m[NODE]\x1b[0m Synchronization required - ${
+          remoteHeight - localHeight
+        } blocks behind`
+      );
+      const BATCH_SIZE = 500;
+
+      for (let i = localHeight; i < remoteHeight; i += BATCH_SIZE) {
+        const start = i;
+        const end = Math.min(i + BATCH_SIZE, remoteHeight);
+
+        console.log(
+          `\x1b[36m[NODE]\x1b[0m Fetching blocks ${start} to ${end - 1}...`
+        );
+
+        const blocksResponse = await fetch(
+          `${process.env.PEER_HTTP}/blocks?start=${start}&end=${end}`
+        );
+
+        if (!blocksResponse.ok) {
+          throw new Error(
+            `Failed to fetch blocks ${start}-${end}: HTTP ${blocksResponse.status}`
+          );
         }
-        bc.mempool.push(...block.transactions);
-        const ok = await bc.addBlock(block, true);
-        if (!ok) {
+
+        const blocks = await blocksResponse.json();
+
+        if (!Array.isArray(blocks)) {
           console.error(
-            `Downloaded block at height ${start + j} is invalid. Stopping sync.`
+            `\x1b[31m[NODE]\x1b[0m Invalid response while syncing blocks ${start}-${end}`
           );
           process.exit(1);
         }
-        if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
-        fs.writeFileSync(`blockchain/${start + j}`, JSON.stringify(block));
-        process.stdout.write(`\rSynced block ${start + j + 1}/${remoteHeight}`);
+
+        for (let j = 0; j < blocks.length; j++) {
+          const block = blocks[j] as Block;
+          const blockHeight = start + j;
+
+          if (blockHeight === 0) {
+            // Genesis block sync
+            if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
+            fs.writeFileSync(
+              `blockchain/${blockHeight}`,
+              JSON.stringify(block)
+            );
+            bc.lastBlock = block.hash;
+            bc.height++;
+            console.log(`\x1b[32m[NODE]\x1b[0m Genesis block synchronized`);
+            continue;
+          }
+
+          bc.mempool.push(...block.transactions);
+          const ok = await bc.addBlock(block, true);
+
+          if (!ok) {
+            console.error(
+              `\x1b[31m[NODE]\x1b[0m CRITICAL: Downloaded block at height ${blockHeight} is invalid`
+            );
+            console.error(
+              `\x1b[31m[NODE]\x1b[0m Sync failed - stopping synchronization`
+            );
+            process.exit(1);
+          }
+
+          if (!fs.existsSync("blockchain")) fs.mkdirSync("blockchain");
+          fs.writeFileSync(`blockchain/${blockHeight}`, JSON.stringify(block));
+
+          const progress = Math.round(((blockHeight + 1) / remoteHeight) * 100);
+          process.stdout.write(
+            `\r\x1b[36m[NODE]\x1b[0m Synced block ${
+              blockHeight + 1
+            }/${remoteHeight} (${progress}%)`
+          );
+        }
       }
+
+      syncing = false;
+    } catch (error: any) {
+      console.error(`\x1b[31m[NODE]\x1b[0m Sync error: ${error.message}`);
+      console.log(`\x1b[33m[NODE]\x1b[0m Continuing without sync...`);
+      syncing = false;
     }
   }
-  (await fetch(process.env.PEER_HTTP + "/mempool").then((res) =>
-    res.json()
-  )).forEach((tx: Transaction) => bc.pushTX(tx));
-  console.log("\nSync complete.");
+
+  // Sync mempool
+  try {
+    console.log(`\n\x1b[36m[NODE]\x1b[0m Synchronizing mempool...`);
+    const mempoolResponse = await fetch(process.env.PEER_HTTP + "/mempool");
+    if (mempoolResponse.ok) {
+      const remoteTxs = await mempoolResponse.json();
+      let syncedTxs = 0;
+      remoteTxs.forEach((tx: Transaction) => {
+        if (bc.pushTX(tx)) syncedTxs++;
+      });
+      console.log(
+        `\x1b[32m[NODE]\x1b[0m Mempool synchronized - ${syncedTxs}/${remoteTxs.length} transactions added`
+      );
+    }
+  } catch (error: any) {
+    console.warn(
+      `\x1b[33m[NODE]\x1b[0m Failed to sync mempool: ${error.message}`
+    );
+  }
+
+  console.log(`\x1b[32m[NODE]\x1b[0m Blockchain synchronization completed`);
 }
 
-// Start P2P and API as usual
+// Start P2P and API
+console.log(`\x1b[36m[NODE]\x1b[0m Starting P2P network...`);
 const p2p = new P2PNetwork(
   process.env.PEER ?? "",
   parseInt(process.env.PORT ?? "6061"),
   bc
 );
 
+// API Routes with professional error handling
+const handleApiError = (error: any, endpoint: string, res: any) => {
+  console.error(`\x1b[31m[API]\x1b[0m ${endpoint} failed: ${error.message}`);
+  res.status(500).json({ error: error.message });
+};
+
 app.get("/block/:height", (req, res) => {
   try {
-    res.json(bc.getBlock(parseInt(req.params.height)));
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+    const height = parseInt(req.params.height);
+    if (isNaN(height) || height < 0) {
+      return res.status(400).json({ error: "Invalid block height" });
+    }
+    res.json(bc.getBlock(height));
+  } catch (error: any) {
+    handleApiError(error, `GET /block/${req.params.height}`, res);
   }
 });
 
@@ -156,32 +276,47 @@ app.get("/blocks", (req, res) => {
   try {
     const start = parseInt(req.query.start as string);
     const end = parseInt(req.query.end as string);
+
+    if (isNaN(start) || isNaN(end)) {
+      return res.status(400).json({ error: "Invalid start or end parameter" });
+    }
+
     if (start > end) {
-      res.status(400);
-      return;
+      return res
+        .status(400)
+        .json({ error: "Start height cannot be greater than end height" });
     }
+
     if (end - start > 500) {
-      res.status(400);
-      return;
+      return res
+        .status(400)
+        .json({ error: "Batch size cannot exceed 500 blocks" });
     }
+
     res.json(bc.getSlice(start, end));
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(
+      error,
+      `GET /blocks?start=${req.query.start}&end=${req.query.end}`,
+      res
+    );
   }
 });
 
 app.get("/height", (_, res) => {
   try {
     res.json({ height: bc.height });
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, "GET /height", res);
   }
 });
 
 app.get("/mempool", (_, res) => {
-  res.json(bc.mempool);
+  try {
+    res.json(bc.mempool);
+  } catch (error: any) {
+    handleApiError(error, "GET /mempool", res);
+  }
 });
 
 app.get("/diff", (_, res) => {
@@ -189,103 +324,111 @@ app.get("/diff", (_, res) => {
     res.json({
       diff: getDiff(bc.getTail()).toString(16),
     });
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, "GET /diff", res);
   }
 });
 
 app.get("/mint-fee", (_, res) => {
   try {
     res.json({ fee: calculateMintFee(bc.height, bc.mintedTokens.size) });
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, "GET /mint-fee", res);
   }
 });
 
 app.get("/reward", (_, res) => {
   try {
     res.json({ reward: calculateReward(bc.height) });
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, "GET /reward", res);
   }
 });
 
 app.get("/balance/:addr", (req, res) => {
   try {
-    res.json(
-      bc.calculateBalance(
-        req.params.addr.split(".")[0],
-        false,
-        req.params.addr.split(".")[1]
-      )
-    );
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+    const parts = req.params.addr.split(".");
+    const address = parts[0];
+    const token = parts[1];
+
+    if (!address) {
+      return res.status(400).json({ error: "Invalid address format" });
+    }
+
+    res.json(bc.calculateBalance(address, false, token));
+  } catch (error: any) {
+    handleApiError(error, `GET /balance/${req.params.addr}`, res);
   }
 });
 
 app.get("/locked/:addr", (req, res) => {
   try {
-    res.json(
-      bc.calculateLocked(
-        req.params.addr.split(".")[0],
-        req.params.addr.split(".")[1]
-      )
-    );
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+    const parts = req.params.addr.split(".");
+    const address = parts[0];
+    const token = parts[1];
+
+    if (!address) {
+      return res.status(400).json({ error: "Invalid address format" });
+    }
+
+    res.json(bc.calculateLocked(address, token));
+  } catch (error: any) {
+    handleApiError(error, `GET /locked/${req.params.addr}`, res);
   }
 });
 
 app.get("/balance-mempool/:addr", (req, res) => {
   try {
-    res.json(
-      bc.calculateBalance(
-        req.params.addr.split(".")[0],
-        true,
-        req.params.addr.split(".")[1]
-      )
-    );
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+    const parts = req.params.addr.split(".");
+    const address = parts[0];
+    const token = parts[1];
+
+    if (!address) {
+      return res.status(400).json({ error: "Invalid address format" });
+    }
+
+    res.json(bc.calculateBalance(address, true, token));
+  } catch (error: any) {
+    handleApiError(error, `GET /balance-mempool/${req.params.addr}`, res);
   }
 });
 
 app.get("/tokens/:addr", (req, res) => {
   try {
+    const address = req.params.addr;
+    if (!address) {
+      return res.status(400).json({ error: "Invalid address" });
+    }
+
     const tokens: string[] = [];
     for (const token of bc.mintedTokens) {
-      if (bc.calculateBalance(req.params.addr, true, token[0]) !== 0)
+      if (bc.calculateBalance(address, true, token[0]) !== 0) {
         tokens.push(token[0]);
+      }
     }
     res.json(tokens);
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, `GET /tokens/${req.params.addr}`, res);
   }
 });
 
 app.get("/token-info/:token", (req, res) => {
   try {
-    res.json(bc.mintedTokens.get(req.params.token));
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+    const tokenInfo = bc.mintedTokens.get(req.params.token);
+    if (!tokenInfo) {
+      return res.status(404).json({ error: "Token not found" });
+    }
+    res.json(tokenInfo);
+  } catch (error: any) {
+    handleApiError(error, `GET /token-info/${req.params.token}`, res);
   }
 });
 
 app.get("/token-count", (_, res) => {
   try {
     res.json({ count: bc.mintedTokens.size });
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, "GET /token-count", res);
   }
 });
 
@@ -293,22 +436,25 @@ app.get("/token/:i", (req, res) => {
   try {
     const index = parseInt(req.params.i);
     if (isNaN(index) || index < 0 || index >= bc.mintedTokens.size) {
-      res.json({ error: "Invalid token index" });
-      return;
+      return res.status(400).json({ error: "Invalid token index" });
     }
+
     // Convert Map to array and get the token at the specified index
     const tokens = Array.from(bc.mintedTokens.entries());
     const [tokenName, tokenInfo] = tokens[index];
     res.json({ token: tokenName, ...tokenInfo });
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, `GET /token/${req.params.i}`, res);
   }
 });
 
 app.get("/history/:addr", (req, res) => {
   try {
     const addr = req.params.addr;
+    if (!addr) {
+      return res.status(400).json({ error: "Invalid address" });
+    }
+
     const history: {
       type: "send" | "receive" | "mint";
       amount: number;
@@ -329,7 +475,6 @@ app.get("/history/:addr", (req, res) => {
 
           const type =
             tx.sender === addr ? "send" : tx.mint ? "mint" : "receive";
-
           const otherAddress = tx.sender === addr ? tx.receiver : tx.sender;
 
           history.push({
@@ -364,34 +509,39 @@ app.get("/history/:addr", (req, res) => {
 
     // Sort by timestamp, most recent first
     history.sort((a, b) => b.timestamp - a.timestamp);
-
     res.json(history);
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, `GET /history/${req.params.addr}`, res);
   }
 });
 
 app.get("/search-blocks/:hash", (req, res) => {
   try {
     const hash = req.params.hash;
+    if (!hash) {
+      return res.status(400).json({ error: "Invalid block hash" });
+    }
+
     // Search through blocks to find matching hash
     for (let i = 0; i < bc.height; i++) {
-      if (bc.getBlock(i).hash === hash) {
-        res.json({ block: bc.getBlock(i), height: i });
-        return;
+      const block = bc.getBlock(i);
+      if (block.hash === hash) {
+        return res.json({ block, height: i });
       }
     }
-    res.json({ error: "Block not found" });
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+    res.status(404).json({ error: "Block not found" });
+  } catch (error: any) {
+    handleApiError(error, `GET /search-blocks/${req.params.hash}`, res);
   }
 });
 
 app.get("/search-tx/:query", (req, res) => {
   try {
     const query = req.params.query;
+    if (!query) {
+      return res.status(400).json({ error: "Invalid search query" });
+    }
+
     const results: { tx: Transaction; blockHeight?: number }[] = [];
 
     // Search in blocks
@@ -420,11 +570,14 @@ app.get("/search-tx/:query", (req, res) => {
     }
 
     res.json({ results });
-  } catch (e: any) {
-    res.json({ error: e.message });
-    console.log("[ERROR]", e);
+  } catch (error: any) {
+    handleApiError(error, `GET /search-tx/${req.params.query}`, res);
   }
 });
 
-console.log("Ready.");
-app.listen(parseInt(process.env.HTTP_PORT ?? "8000"));
+const httpPort = parseInt(process.env.HTTP_PORT ?? "8000");
+app.listen(httpPort, () => {
+  console.log(
+    `\x1b[36m[NODE]\x1b[0m Node initialization completed successfully`
+  );
+});
