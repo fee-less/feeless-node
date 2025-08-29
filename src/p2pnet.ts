@@ -644,7 +644,7 @@ class P2PNetwork {
 
           if (subChain.length > 15) {
             console.warn(
-              `\x1b[33m[P2P]\x1b[0m Longest chain push is too long.`
+              `\x1b[33m[P2P]\x1b[0m Received pushed chain is too long (${subChain.length} blocks). Ignoring.`
             );
             return;
           }
@@ -657,7 +657,11 @@ class P2PNetwork {
               this.bc.getBlock(i).hash ===
               subChain[0].prev_hash
             ) {
-              console.log("Orphaning chain from block:", i + 1);
+              console.log(
+                `\x1b[36m[P2P]\x1b[0m Orphaning local chain starting from block ${
+                  i + 1
+                }...`
+              );
               const sh = this.bc.height;
               const slb = this.bc.lastBlock;
               this.bc.height = i + 1;
@@ -669,7 +673,12 @@ class P2PNetwork {
                 if (!await this.bc.addBlock(b, true)) {
                   this.bc.height = sh;
                   this.bc.lastBlock = slb;
-                  console.log("Failed to push longer chain");
+                  console.warn(
+                    `\x1b[31m[P2P]\x1b[0m Failed to apply pushed block ${b.hash.substring(
+                      0,
+                      16
+                    )}...`
+                  );
                   failed = true;
                   break;
                 }
@@ -683,10 +692,9 @@ class P2PNetwork {
 
               this.toPeers(payload);
               console.log(
-                "Replaced to longest chain from block",
-                i,
-                "to",
-                i + subChain.length
+                `\x1b[32m[P2P]\x1b[0m Successfully replaced local chain with pushed chain from block ${
+                  i + 1
+                } to ${i + subChain.length}`
               );
               break;
             }
