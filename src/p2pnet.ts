@@ -522,6 +522,7 @@ class P2PNetwork {
               const sh = this.bc.height;
               const slb = this.bc.lastBlock;
               this.bc.height = i + 1;
+              console.log(i)
               this.bc.lastBlock = this.bc.getBlock(i).hash;
 
               let failed = false;
