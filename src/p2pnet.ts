@@ -522,7 +522,6 @@ class P2PNetwork {
               const sh = this.bc.height;
               const slb = this.bc.lastBlock;
               this.bc.height = i + 1;
-              console.log(i)
               this.bc.lastBlock = this.bc.getBlock(i).hash;
 
               let failed = false;
@@ -567,7 +566,7 @@ class P2PNetwork {
       }
     } catch (error: any) {
       console.error(
-        `\x1b[31m[P2P]\x1b[0m Error processing peer payload: ${error.message}`
+        `\x1b[31m[P2P]\x1b[0m Error processing peer payload:`, error
       );
     }
   }
