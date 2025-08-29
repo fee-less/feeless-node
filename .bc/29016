@@ -1,0 +1,27 @@
+{
+  "timestamp": 1756417438962,
+  "transactions": [
+    {
+      "sender": "network",
+      "receiver": "02b4a4887c88e80d32fd9fd6317bbaac2a28c4070feb6d93f82bbefc52f5b85f13",
+      "amount": 679981,
+      "signature": "",
+      "nonce": 800724,
+      "timestamp": 1756417438962
+    },
+    {
+      "sender": "network",
+      "receiver": "036d2cbe93db586b53b754291a657424c6b5c1e6ca6237cadc1db948b300ede09b",
+      "amount": 9034028,
+      "signature": "",
+      "nonce": 449085,
+      "timestamp": 1756417438962
+    }
+  ],
+  "prev_hash": "88de70c2adb5d1cc042e52397b52ead1e03e2bac9d40292669b853af56",
+  "nonce": 519409174,
+  "signature": "3045022100954fd2397b1639d0afd8219a66ff2e763c3ee17cc7670004e6b37d08aa04466102200ea7cd229a77fb263be08e2bb8ff0721a3111eead0eac0a7635c59b6cbb30ccc",
+  "proposer": "036d2cbe93db586b53b754291a657424c6b5c1e6ca6237cadc1db948b300ede09b",
+  "hash": "416dcf7646d95811efbe92a29ac942ddbcac034355df7b727200de51ae",
+  "diff": "98f4d92ec2c06778ec49193fb7b4c15aa9f21184a40e317a509632723d"
+}

@@ -594,7 +594,7 @@ class P2PNetwork {
           console.log(
             `\x1b[32m[SYNC]\x1b[0m Fork point found at height ${height + 1}`
           );
-          return height + 1; // First divergent block
+          return height;
         }
       }
 
