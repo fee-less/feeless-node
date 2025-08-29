@@ -8,9 +8,8 @@ import CryptoJS from "crypto-js";
 
 interface SyncState {
   isActive: boolean;
-  startHeight: number;  
+  startHeight: number;
   targetHeight: number;
-  retryCount: number;
 }
 
 class P2PNetwork {
@@ -26,15 +25,12 @@ class P2PNetwork {
     isActive: false,
     startHeight: 0,
     targetHeight: 0,
-    retryCount: 0,
   };
   private lastSeenBlock = "";
   private lastSeenPush = "";
-  private readonly MAX_SYNC_RETRIES = 3;
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
-  private readonly SYNC_RETRY_DELAY = 5000;
   private readonly HEARTBEAT_INTERVAL = 10000;
-  private readonly WATCHDOG_INTERVAL = 30000;
+  private readonly WATCHDOG_INTERVAL = 20000;
   private readonly RECONNECT_DELAY = 10000;
   private rl?: readline.Interface;
   private isShuttingDown = false;
@@ -48,9 +44,9 @@ class P2PNetwork {
 
     this.initializePeerConnections();
     this.initializeWebSocketServer();
-    this.startWatchdog();
     this.setupProcessHandlers();
     this.setupKeyboardListener();
+    setInterval(this.watchDog.bind(this), this.WATCHDOG_INTERVAL);
 
     console.log(`\x1b[36m[P2P]\x1b[0m Network initialized on port ${port}`);
     if (this.peerUrls.length > 0) {
@@ -165,14 +161,6 @@ class P2PNetwork {
         `\x1b[31m[P2P]\x1b[0m WebSocket server error: ${err.message}`
       );
     });
-  }
-
-  private startWatchdog(): void {
-    setInterval(() => {
-      if (!this.isShuttingDown) {
-        this.watchDog();
-      }
-    }, this.WATCHDOG_INTERVAL);
   }
 
   private createPeerSocket(peerUrl: string): WebSocket | null {
@@ -345,25 +333,72 @@ class P2PNetwork {
       const remoteHeight = await this.fetchRemoteHeight();
       if (remoteHeight === null || remoteHeight <= this.bc.height) {
         if (remoteHeight !== null && remoteHeight < this.bc.height) {
-          const push = this.bc.getSlice(Math.max(this.bc.height - 15, 1), this.bc.height);
-          this.wscs.forEach(c => c.send(JSON.stringify({
-            event: "push",
-            data: push,
-          })));
+          const push = this.bc.getSlice(
+            Math.max(this.bc.height - 15, 1),
+            this.bc.height
+          );
+          this.wscs.forEach((c) =>
+            c.send(
+              JSON.stringify({
+                event: "push",
+                data: push,
+              })
+            )
+          );
           this.lastSeenPush = CryptoJS.SHA256(JSON.stringify(push)).toString();
           console.log("\n\x1b[33m[SYNC]\x1b[0m Pushing peer to longest chain");
         }
         return;
       }
 
-      const forkPoint = await this.findForkPoint();
-      console.warn(
-        `\x1b[33m[SYNC]\x1b[0m Fork detected - Local: ${this.bc.height}, Remote: ${remoteHeight}, Fork point: ${forkPoint}`
-      );
-
-      await this.startSync(forkPoint, remoteHeight);
+      await this.sync();
     } catch (error: any) {
       console.error(`\x1b[31m[SYNC]\x1b[0m Watchdog failed: ${error.message}`);
+    }
+  }
+
+  private async sync() {
+    const remote = await this.fetchRemoteHeight();
+    if (!remote || remote <= this.bc.height || this.syncState.isActive) return;
+    this.syncState.isActive = true;
+    this.syncState.targetHeight = remote;
+    try {
+      console.log("[SYNC] Syncing to longer chain...");
+      let fork = 0;
+      for (let i = this.bc.height - 1; i >= 0; i--) {
+        if (
+          (await this.fetchRemoteBlock(i))!.hash === this.bc.getBlock(i).hash
+        ) {
+          fork = i + 1;
+          this.bc.height = fork;
+          this.bc.lastBlock = this.bc.getBlock(i).hash;
+          break;
+        }
+      }
+      this.syncState.startHeight = fork;
+      console.log("[SYNC] Orphaning " + (this.bc.height - fork + 1) + "block" + ((this.bc.height - fork + 1) === 1 ? "" : "s"));
+
+      this.bc.mempool = [];
+
+      for (let i = fork; i < remote; i++) {
+        const block = await this.fetchRemoteBlock(i);
+        if (!block) throw new Error();
+        block.transactions.forEach((tx) => this.bc.pushTX(tx));
+        if (!(await this.bc.addBlock(block, true))) throw new Error();
+        process.stdout.write(
+          `\r[SYNC] Restoring longest chain ${i + (remote - fork)}/${
+            remote - fork
+          }`
+        );
+      }
+
+      (await this.fetchRemoteMempool()).forEach((tx) => this.bc.pushTX(tx));
+
+      console.log("[SYNC] Chain up to date with longest chain known.`");
+      this.syncState.isActive = false;
+    } catch (e) {
+      console.log("[SYNC] Error syncing longer chain`");
+      this.syncState.isActive = false;
     }
   }
 
@@ -413,117 +448,6 @@ class P2PNetwork {
     }
   }
 
-  private async startSync(
-    startHeight: number,
-    targetHeight: number
-  ): Promise<void> {
-    if (this.syncState.isActive) {
-      console.warn(
-        `\x1b[33m[SYNC]\x1b[0m Sync already in progress, skipping request`
-      );
-      return;
-    }
-
-    this.syncState = {
-      isActive: true,
-      startHeight,
-      targetHeight,
-      retryCount: 0,
-    };
-
-    console.log(
-      `\x1b[36m[SYNC]\x1b[0m Starting synchronization from height ${startHeight} to ${targetHeight}`
-    );
-
-    try {
-      await this.performSync();
-      console.log(
-        `\x1b[32m[SYNC]\x1b[0m Synchronization completed successfully. New height: ${this.bc.height}`
-      );
-    } catch (error: any) {
-      console.error(
-        `\x1b[31m[SYNC]\x1b[0m Synchronization failed: ${error.message}`
-      );
-      await this.handleSyncFailure();
-    } finally {
-      this.syncState.isActive = false;
-    }
-  }
-
-  private async performSync(): Promise<void> {
-    const { startHeight, targetHeight } = this.syncState;
-
-    // Create backup snapshot for rollback
-    const originalHeight = this.bc.height;
-    const backupMempool = [...this.bc.mempool];
-
-    try {
-      // Clear mempool before sync
-      this.bc.mempool = [];
-      console.log(`\x1b[36m[SYNC]\x1b[0m Mempool cleared for synchronization`);
-
-      // Fetch and validate blocks in batches
-      const blocksToSync: Block[] = [];
-
-      for (let height = startHeight; height < targetHeight; height++) {
-        const block = await this.fetchRemoteBlock(height);
-        if (!block) {
-          throw new Error(`Failed to fetch block at height ${height}`);
-        }
-        blocksToSync.push(block);
-      }
-
-      console.log(
-        `\x1b[36m[SYNC]\x1b[0m Fetched ${blocksToSync.length} blocks for synchronization`
-      );
-
-      // Validate and apply blocks atomically
-      for (let i = 0; i < blocksToSync.length; i++) {
-        const block = blocksToSync[i];
-        const expectedHeight = startHeight + i;
-
-        // Validate block before adding
-        const isValid = await this.bc.addBlock(block, true);
-        if (!isValid) {
-          throw new Error(`Invalid block at height ${expectedHeight}`);
-        }
-
-        // Update height and persist
-        this.bc.height = expectedHeight + 1;
-        await this.persistBlock(block, expectedHeight);
-
-        const progress = Math.round(((i + 1) / blocksToSync.length) * 100);
-        process.stdout.write(
-          `\r\x1b[36m[SYNC]\x1b[0m Synced block ${
-            expectedHeight + 1
-          }/${targetHeight} (${progress}%)`
-        );
-      }
-
-      // Sync mempool
-      const remoteMempool = await this.fetchRemoteMempool();
-      remoteMempool.forEach((tx) => this.bc.pushTX(tx));
-      console.log(
-        `\x1b[36m[SYNC]\x1b[0m Synchronized ${remoteMempool.length} transactions to mempool`
-      );
-
-      // Final validation
-      if (this.bc.height !== targetHeight) {
-        throw new Error(
-          `Height mismatch: expected ${targetHeight}, got ${this.bc.height}`
-        );
-      }
-    } catch (error) {
-      // Rollback on failure
-      console.error(
-        `\x1b[31m[SYNC]\x1b[0m Rolling back due to error: ${error}`
-      );
-      this.bc.height = originalHeight;
-      this.bc.mempool = backupMempool;
-      throw error;
-    }
-  }
-
   private async persistBlock(block: Block, height: number): Promise<void> {
     try {
       if (!fs.existsSync("blockchain")) {
@@ -539,74 +463,6 @@ class P2PNetwork {
         `\x1b[31m[SYNC]\x1b[0m Failed to persist block ${height}: ${error.message}`
       );
       throw error;
-    }
-  }
-
-  private async handleSyncFailure(): Promise<void> {
-    this.syncState.retryCount++;
-
-    if (this.syncState.retryCount < this.MAX_SYNC_RETRIES) {
-      const retryDelay = this.SYNC_RETRY_DELAY * this.syncState.retryCount;
-      console.log(
-        `\x1b[33m[SYNC]\x1b[0m Retrying sync in ${retryDelay}ms (attempt ${
-          this.syncState.retryCount + 1
-        }/${this.MAX_SYNC_RETRIES})`
-      );
-
-      setTimeout(async () => {
-        if (!this.syncState.isActive) {
-          await this.startSync(
-            this.syncState.startHeight,
-            this.syncState.targetHeight
-          );
-        }
-      }, retryDelay); // Exponential backoff
-    } else {
-      console.error(
-        `\x1b[31m[SYNC]\x1b[0m Maximum sync retries exceeded. Manual intervention may be required`
-      );
-    }
-  }
-
-  private async findForkPoint(): Promise<number> {
-    try {
-      const remoteHeight = await this.fetchRemoteHeight();
-      if (remoteHeight === null) {
-        throw new Error("Cannot fetch remote height");
-      }
-
-      const minHeight = Math.min(this.bc.height, remoteHeight);
-      console.log(
-        `\x1b[36m[SYNC]\x1b[0m Searching for fork point up to height ${minHeight}`
-      );
-
-      for (let height = minHeight - 1; height >= 0; height--) {
-        const [remoteBlock, localBlock] = await Promise.all([
-          this.fetchRemoteBlock(height),
-          Promise.resolve(this.bc.getBlock(height)),
-        ]);
-
-        if (!remoteBlock || !localBlock) {
-          continue;
-        }
-
-        if (remoteBlock.hash === localBlock.hash) {
-          console.log(
-            `\x1b[32m[SYNC]\x1b[0m Fork point found at height ${height + 1}`
-          );
-          return height;
-        }
-      }
-
-      console.warn(
-        `\x1b[33m[SYNC]\x1b[0m No common block found, full chain replacement needed`
-      );
-      return 0; // Complete chain replacement needed
-    } catch (error: any) {
-      console.error(
-        `\x1b[31m[SYNC]\x1b[0m Failed to find fork point: ${error.message}`
-      );
-      return 0; // Default to full sync
     }
   }
 
@@ -637,7 +493,11 @@ class P2PNetwork {
 
         case "push":
           const subChain = payload.data as Block[];
-          if (CryptoJS.SHA256(JSON.stringify(subChain)).toString() === this.lastSeenPush) return;
+          if (
+            CryptoJS.SHA256(JSON.stringify(subChain)).toString() ===
+            this.lastSeenPush
+          )
+            return;
           this.lastSeenPush = CryptoJS.SHA256(
             JSON.stringify(subChain)
           ).toString();
@@ -653,10 +513,7 @@ class P2PNetwork {
             i >= Math.max(this.bc.height - subChain.length - 1, 0);
             i--
           ) {
-            if (
-              this.bc.getBlock(i).hash ===
-              subChain[0].prev_hash
-            ) {
+            if (this.bc.getBlock(i).hash === subChain[0].prev_hash) {
               console.log(
                 `\x1b[36m[P2P]\x1b[0m Orphaning local chain starting from block ${
                   i + 1
@@ -670,7 +527,7 @@ class P2PNetwork {
               let failed = false;
               for (const b of subChain) {
                 b.transactions.map((tx) => this.bc.pushTX(tx));
-                if (!await this.bc.addBlock(b, true)) {
+                if (!(await this.bc.addBlock(b, true))) {
                   this.bc.height = sh;
                   this.bc.lastBlock = slb;
                   console.warn(
