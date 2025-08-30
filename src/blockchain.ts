@@ -15,6 +15,7 @@ import {
   getDiff,
   TAIL,
 } from "feeless-utils";
+import { SplitTerminalUI } from "./ui.js";
 const { SHA256 } = cryptoJS;
 
 const ec = new EC("secp256k1");
@@ -35,14 +36,20 @@ class Blockchain {
     addr: string;
     token?: string;
   }[] = []; // Track balances for each address
-  private readonly MAX_USED_SIGNATURES = 100000; // Keep last 100k signatures
+  private readonly MAX_USED_SIGNATURES = 10000; // Keep last 10k signatures
   private _syncPromise: Promise<void> | null = null;
   private _syncResolve: (() => void) | null = null;
+  private ui: SplitTerminalUI;
 
-  constructor(blocks: Block[], folder: string = "blockchain") {
+  constructor(
+    blocks: Block[],
+    folder: string = "blockchain",
+    ui?: SplitTerminalUI
+  ) {
     this.folder = folder;
-    console.log(
-      `\x1b[36m[BLOCKCHAIN]\x1b[0m Initializing blockchain with ${blocks.length} blocks...`
+    this.ui = ui || new SplitTerminalUI();
+    this.ui.logRight(
+      `\x1b[36m[BLOCKCHAIN]\x1b[0m Initializing blockchain with \x1b[33m${blocks.length}\x1b[0m blocks...`
     );
 
     this._syncPromise = new Promise((resolve) => {
@@ -96,17 +103,20 @@ class Blockchain {
             `\x1b[31m[BLOCKCHAIN]\x1b[0m CRITICAL: Invalid block detected during initialization - potential tampering`
           );
           console.error(
-            `\x1b[31m[BLOCKCHAIN]\x1b[0m Block details:`,
-            JSON.stringify(block, null, 2)
+            `\x1b[35m[BLOCKCHAIN]\x1b[0m Block details: ${JSON.stringify(
+              block,
+              null,
+              2
+            )}`
           );
           console.error(
-            `\x1b[31m[BLOCKCHAIN]\x1b[0m Consider switching to a different sync node`
+            `\x1b[33m[BLOCKCHAIN]\x1b[0m Consider switching to a different sync node`
           );
           return;
         }
       }
-      console.log(
-        `\x1b[32m[BLOCKCHAIN]\x1b[0m Blockchain initialization completed - Height: ${this.height}`
+      console.error(
+        `\x1b[32m[BLOCKCHAIN]\x1b[0m Blockchain initialization completed - Height: \x1b[36m${this.height}\x1b[0m`
       );
       this.onSynced();
       if (this._syncResolve) this._syncResolve();
@@ -160,8 +170,8 @@ class Blockchain {
       if (tx.mint && tx.receiver === DEV_WALLET) {
         // Check if token was already minted
         if (this.mintedTokens.has(tx.mint.token)) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Token ${tx.mint.token} already minted - rejecting duplicate`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Token \x1b[35m${tx.mint.token}\x1b[0m already minted - rejecting duplicate`
           );
           return false;
         }
@@ -178,8 +188,8 @@ class Blockchain {
             token: tx.mint.token,
           };
           this.mempool.push(airdropTx);
-          console.log(
-            `\x1b[32m[BLOCKCHAIN]\x1b[0m Airdrop transaction created for ${tx.mint.token}: ${tx.mint.airdrop} tokens`
+          this.ui.logRight(
+            `\x1b[32m[BLOCKCHAIN]\x1b[0m Airdrop transaction created for \x1b[35m${tx.mint.token}\x1b[0m: \x1b[33m${tx.mint.airdrop}\x1b[0m tokens`
           );
         }
       }
@@ -195,22 +205,22 @@ class Blockchain {
     isBlockValidation = false
   ) {
     if (!Number.isInteger(tx.amount) || tx.amount <= 0) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid amount: ${tx.amount}`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid amount: \x1b[33m${tx.amount}\x1b[0m`
       );
       return false;
     }
 
     if (tx.unlock && !Number.isInteger(tx.unlock)) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid unlock parameter`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid unlock parameter`
       );
       return false;
     }
 
     if (tx.unlock && tx.timestamp >= tx.unlock) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid unlock time`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid unlock time`
       );
       return false;
     }
@@ -230,37 +240,37 @@ class Blockchain {
             pendingTx.mint.token === tx.token
           ) {
             if (tx.unlock) {
-              console.warn(
-                `\x1b[33m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Cannot be locked`
+              this.ui.logRight(
+                `\x1b[31m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Cannot be locked`
               );
               return false;
             }
             // Found pending mint, validate airdrop amount
             if (tx.amount !== pendingTx.mint.airdrop) {
-              console.warn(
-                `\x1b[33m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Invalid airdrop amount`
+              this.ui.logRight(
+                `\x1b[31m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Invalid airdrop amount`
               );
               return false;
             }
             if (this.mintedTokens.has(tx.token)) {
-              console.warn(
-                `\x1b[33m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Airdrop not claimed at token mint`
+              this.ui.logRight(
+                `\x1b[31m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Airdrop not claimed at token mint`
               );
               return false;
             }
             return true;
           }
         }
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Token ${tx.token} does not exist`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Token \x1b[35m${tx.token}\x1b[0m does not exist`
         );
         return false;
       }
 
       // Token exists, validate airdrop amount
       if (tx.amount !== tokenInfo.airdrop) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid airdrop amount for ${tx.token}`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid airdrop amount for \x1b[35m${tx.token}\x1b[0m`
         );
         return false;
       }
@@ -276,16 +286,16 @@ class Blockchain {
         tx.amount !== expectedFee ||
         tx.unlock
       ) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Invalid parameters (fee: ${expectedFee}, receiver: ${DEV_WALLET})`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Invalid parameters (fee: \x1b[33m${expectedFee}\x1b[0m, receiver: \x1b[35m${DEV_WALLET}\x1b[0m)`
         );
         return false;
       }
 
       if (tx.timestamp > 1754043286413) {
         if (this.lastNonces.has(tx.nonce + "")) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid nonce`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid nonce`
           );
           return false;
         }
@@ -297,14 +307,14 @@ class Blockchain {
             tx.signature
           )
         ) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid signature`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid signature`
           );
           return false;
         }
         if (this.usedSignatures.includes(tx.signature)) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Signature already used`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Signature already used`
           );
           return false;
         }
@@ -312,28 +322,28 @@ class Blockchain {
 
       // Check if user has enough balance to pay the minting fee
       if (this.calculateBalance(tx.sender, false) < expectedFee) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Insufficient balance for fee`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Insufficient balance for fee`
         );
         return false;
       }
 
       const token = tx.mint.token;
       if (token.toLowerCase() === "flss") {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Token rejected - Cannot impersonate FLSS token`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Token rejected - Cannot impersonate FLSS token`
         );
         return false;
       }
       if (token.toLowerCase() === "" || token.length >= 20) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Token rejected - Invalid length (must be 1-19 characters)`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Token rejected - Invalid length (must be 1-19 characters)`
         );
         return false;
       }
       if (!/^[A-Z]+$/.test(token)) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Token rejected - Invalid format (uppercase letters only)`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Token rejected - Invalid format (uppercase letters only)`
         );
         return false;
       }
@@ -341,24 +351,24 @@ class Blockchain {
       // Check if token already exists
       if (isBlockValidation) {
         if (this.mintedTokens.has(token)) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Token ${token} rejected - Already minted`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Token \x1b[35m${token}\x1b[0m rejected - Already minted`
           );
           return false;
         }
       } else {
         // Check both mintedTokens and current mempool
         if (this.mintedTokens.has(token)) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Token ${token} rejected - Already minted`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Token \x1b[35m${token}\x1b[0m rejected - Already minted`
           );
           return false;
         }
         // Check if token is being minted in current mempool
         for (const pendingTx of this.mempool) {
           if (pendingTx.mint && pendingTx.mint.token === token) {
-            console.warn(
-              `\x1b[33m[BLOCKCHAIN]\x1b[0m Token ${token} rejected - Already being minted in mempool`
+            this.ui.logRight(
+              `\x1b[31m[BLOCKCHAIN]\x1b[0m Token \x1b[35m${token}\x1b[0m rejected - Already being minted in mempool`
             );
             return false;
           }
@@ -370,16 +380,16 @@ class Blockchain {
         tx.mint.miningReward !== undefined &&
         (!Number.isInteger(tx.mint.miningReward) || tx.mint.miningReward <= 0)
       ) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Invalid mining reward`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Invalid mining reward`
         );
         return false;
       }
 
       // Validate airdrop amount
       if (!Number.isInteger(tx.mint.airdrop) || tx.mint.airdrop < 0) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Invalid airdrop amount`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Mint transaction rejected - Invalid airdrop amount`
         );
         return false;
       }
@@ -392,8 +402,8 @@ class Blockchain {
       // Add nonce validation
       const lastNonce = this.lastNonces.get(tx.sender) || 0;
       if (tx.nonce <= lastNonce) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Nonce must be greater than ${lastNonce}`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Nonce must be greater than \x1b[33m${lastNonce}\x1b[0m`
         );
         return false;
       }
@@ -405,8 +415,8 @@ class Blockchain {
           tx.signature
         )
       ) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid signature`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid signature`
         );
         return false;
       }
@@ -414,14 +424,14 @@ class Blockchain {
         this.calculateBalance(tx.sender, includeMempoolBalance, tx.token) <
         tx.amount
       ) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Insufficient balance`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Insufficient balance`
         );
         return false;
       }
       if (this.usedSignatures.includes(tx.signature)) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Transaction rejected - Signature already used`
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Signature already used`
         );
         return false;
       }
@@ -463,15 +473,15 @@ class Blockchain {
       // Validate dev fee transaction
       if (tx.sender === "network" && tx.receiver === DEV_WALLET && !tx.token) {
         if (tx.unlock) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Dev fee transaction cannot be locked`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Dev fee transaction cannot be locked`
           );
           return { isValid: false, hasDevFee, hasReward };
         }
 
         if (hasDevFee) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Multiple dev fee transactions`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Multiple dev fee transactions`
           );
           return { isValid: false, hasDevFee, hasReward };
         }
@@ -483,15 +493,15 @@ class Blockchain {
       // Validate reward transaction
       if (tx.sender === "network" && tx.receiver !== DEV_WALLET) {
         if (tx.unlock) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Reward transaction cannot be locked`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Reward transaction cannot be locked`
           );
           return { isValid: false, hasDevFee, hasReward };
         }
 
         if (tokenRewardTx) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Multiple reward transactions`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Multiple reward transactions`
           );
           return { isValid: false, hasDevFee, hasReward };
         }
@@ -501,20 +511,20 @@ class Blockchain {
           const tokenInfo =
             this.mintedTokens.get(tx.token) || pendingMints.get(tx.token);
           if (!tokenInfo) {
-            console.warn(
-              `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Reward for non-existent token ${tx.token}`
+            this.ui.logRight(
+              `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Reward for non-existent token \x1b[35m${tx.token}\x1b[0m`
             );
             return { isValid: false, hasDevFee, hasReward };
           }
           if (tokenInfo.miningReward === 0) {
-            console.warn(
-              `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Token ${tx.token} is not minable`
+            this.ui.logRight(
+              `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Token \x1b[35m${tx.token}\x1b[0m is not minable`
             );
             return { isValid: false, hasDevFee, hasReward };
           }
           if (tokenInfo.miningReward !== tx.amount) {
-            console.warn(
-              `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Invalid reward amount for ${tx.token}`
+            this.ui.logRight(
+              `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Invalid reward amount for \x1b[35m${tx.token}\x1b[0m`
             );
             return { isValid: false, hasDevFee, hasReward };
           }
@@ -524,8 +534,8 @@ class Blockchain {
             calculateReward(this.height) * (1 - DEV_FEE)
           );
           if (tx.amount !== expectedReward) {
-            console.warn(
-              `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Invalid FLSS reward: ${tx.amount} (expected: ${expectedReward})`
+            this.ui.logRight(
+              `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Invalid FLSS reward: \x1b[33m${tx.amount}\x1b[0m (expected: \x1b[32m${expectedReward}\x1b[0m)`
             );
             return { isValid: false, hasDevFee, hasReward };
           }
@@ -538,8 +548,8 @@ class Blockchain {
       // Validate airdrop transaction
       if (tx.sender === "mint" && tx.token) {
         if (tx.unlock) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Mint transaction cannot be locked`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Mint transaction cannot be locked`
           );
           return { isValid: false, hasDevFee, hasReward };
         }
@@ -547,14 +557,14 @@ class Blockchain {
         const tokenInfo =
           this.mintedTokens.get(tx.token) || pendingMints.get(tx.token);
         if (!tokenInfo) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Airdrop for non-existent token ${tx.token}`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Airdrop for non-existent token \x1b[35m${tx.token}\x1b[0m`
           );
           return { isValid: false, hasDevFee, hasReward };
         }
         if (tx.amount !== tokenInfo.airdrop) {
-          console.warn(
-            `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Invalid airdrop amount for ${tx.token}`
+          this.ui.logRight(
+            `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Invalid airdrop amount for \x1b[35m${tx.token}\x1b[0m`
           );
           return { isValid: false, hasDevFee, hasReward };
         }
@@ -567,8 +577,8 @@ class Blockchain {
             btx.token === tx.token &&
             btx.amount === tokenInfo.airdrop
           ) {
-            console.warn(
-              `\x1b[33m[BLOCKCHAIN]\x1b[0m Block validation failed - Duplicate airdrop in block for ${tx.token}`
+            this.ui.logRight(
+              `\x1b[31m[BLOCKCHAIN]\x1b[0m Block validation failed - Duplicate airdrop in block for \x1b[35m${tx.token}\x1b[0m`
             );
             return { isValid: false, hasDevFee, hasReward };
           }
@@ -582,14 +592,18 @@ class Blockchain {
 
   async checkBlock(block: Block, isBackchecking = false, skipHashing = false) {
     if (BigInt(getDiff(this.getTail())) < BigInt("0x" + block.hash)) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid difficulty: ${block.hash}`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid difficulty: \x1b[33m${block.hash}\x1b[0m`
       );
       return false;
     }
     if (getDiff(this.getTail()) !== BigInt("0x" + block.diff)) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid difficulty parameter`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid difficulty parameter (got: \x1b[33m${
+          block.diff
+        }\x1b[0m, instead of: \x1b[32m${getDiff(this.getTail()).toString(
+          16
+        )}\x1b[0m)`
       );
       return false;
     }
@@ -600,11 +614,11 @@ class Blockchain {
       if (tx.sender === "network") continue;
       if (tx.sender === "mint") continue;
       if (seenSenders.has(tx.sender)) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Multiple transactions from sender: ${tx.sender.substring(
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Multiple transactions from sender: \x1b[35m${tx.sender.substring(
             0,
             8
-          )}...`
+          )}...\x1b[0m`
         );
         return false;
       }
@@ -618,24 +632,24 @@ class Blockchain {
 
     // Add future timestamp validation
     if (block.timestamp > Date.now() + 10000) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Timestamp in future`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Timestamp in future`
       );
       return false;
     }
     if (!isBackchecking && block.timestamp < Date.now() - BLOCK_TIME) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Timestamp too old`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Timestamp too old`
       );
       return false;
     }
 
     if (!isBackchecking && block.transactions.length - 2 < 0.75 * length) {
       // Minimum 75 % of txs from mempool
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Insufficient transactions: ${
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Insufficient transactions: \x1b[33m${
           block.transactions.length
-        } (expected: ${Math.ceil(0.75 * length)})`
+        }\x1b[0m (expected: \x1b[32m${Math.ceil(0.75 * length)}\x1b[0m)`
       );
       return false;
     }
@@ -650,19 +664,22 @@ class Blockchain {
       const calculatedHash = (
         await hashArgon(JSON.stringify({ ...block, hash: "", signature: "" }))
       ).toString(16);
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Hash mismatch (calculated: ${calculatedHash.substring(
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Hash mismatch (calculated: \x1b[33m${calculatedHash.substring(
           0,
           16
-        )}..., provided: ${block.hash.substring(0, 16)}...)`
+        )}...\x1b[0m, provided: \x1b[35m${block.hash.substring(
+          0,
+          16
+        )}...\x1b[0m)`
       );
       return false;
     }
 
     // Check if the previous hash in the current block matches the hash of the previous block
     if (this.height > 0 && block.prev_hash !== this.lastBlock) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid previous hash`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid previous hash`
       );
       return false;
     }
@@ -678,8 +695,8 @@ class Blockchain {
           block.signature
         )
     ) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid proposer signature`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid proposer signature`
       );
       return false;
     }
@@ -690,14 +707,14 @@ class Blockchain {
       return false;
     }
     if (!hasDevFee) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Missing dev fee transaction`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Missing dev fee transaction`
       );
       return false;
     }
     if (!hasReward) {
-      console.warn(
-        `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Missing reward transaction`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Missing reward transaction`
       );
       return false;
     }
@@ -721,8 +738,8 @@ class Blockchain {
               calculateMintFee(this.height, this.mintedTokens.size)
           ) {
             if (this.mintedTokens.has(pendingTx.mint.token)) {
-              console.warn(
-                `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Token ${pendingTx.mint.token} already minted`
+              this.ui.logRight(
+                `[BLOCKCHAIN] Block rejected - Token ${pendingTx.mint.token} already minted`
               );
               return false;
             }
@@ -732,11 +749,11 @@ class Blockchain {
 
       // Pass isBlockValidation=true when checking transactions in a block
       if (!this.checkTX(tx, false, true)) {
-        console.warn(
-          `\x1b[33m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid transaction from ${tx.sender.substring(
+        this.ui.logRight(
+          `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Invalid transaction from \x1b[35m${tx.sender.substring(
             0,
             8
-          )}...`
+          )}...\x1b[0m`
         );
         return false;
       }
@@ -765,8 +782,8 @@ class Blockchain {
             miningReward: tx.mint.miningReward || 0,
             airdrop: tx.mint.airdrop,
           });
-          console.log(
-            `\x1b[32m[BLOCKCHAIN]\x1b[0m Token ${tx.mint.token} minted successfully`
+          this.ui.logRight(
+            `\x1b[32m[BLOCKCHAIN]\x1b[0m Token \x1b[35m${tx.mint.token}\x1b[0m minted successfully`
           );
         }
         // Update balances map
@@ -823,12 +840,13 @@ class Blockchain {
       }
 
       if (!isBackchecking) {
-        process.stdout.write(
-          `\r\x1b[32m[BLOCKCHAIN]\x1b[0m Block ${
+        this.ui.logRight(
+          `\x1b[32m[BLOCKCHAIN]\x1b[0m Block \x1b[36m${
             this.height - 1
-          } added successfully - Transactions: ${
+          }\x1b[0m added successfully - Transactions: \x1b[33m${
             block.transactions.length
-          }, Mempool cleared: ${removedCount}`
+          }\x1b[0m, Mempool cleared: \x1b[35m${removedCount}\x1b[0m`,
+          true
         );
       }
 
@@ -836,11 +854,11 @@ class Blockchain {
     }
 
     if (!isBackchecking) {
-      console.error(
-        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block ${block.hash.substring(
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Block \x1b[33m${block.hash.substring(
           0,
           16
-        )}... rejected and discarded`
+        )}...\x1b[0m rejected and discarded`
       );
     }
     return false;
@@ -860,10 +878,12 @@ class Blockchain {
 
   getBlock(h: number): Block {
     try {
-      return JSON.parse(fs.readFileSync(this.folder + "/" + h, "utf-8")) as Block;
+      return JSON.parse(
+        fs.readFileSync(this.folder + "/" + h, "utf-8")
+      ) as Block;
     } catch (error: any) {
-      console.error(
-        `\x1b[31m[BLOCKCHAIN]\x1b[0m Failed to read block ${h}: ${error.message}`
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Failed to read block \x1b[36m${h}\x1b[0m: ${error.message}`
       );
       throw error;
     }
@@ -889,18 +909,20 @@ class Blockchain {
       .replace("T", " ")
       .substring(0, 19);
 
-    console.log(`\n\x1b[36m[BLOCKCHAIN STATUS]\x1b[0m ${timestamp}`);
-    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    console.log(`  \x1b[32mHeight:\x1b[0m ${status.height}`);
-    console.log(`  \x1b[32mLast Block:\x1b[0m ${status.lastBlock}`);
-    console.log(`  \x1b[32mMempool Size:\x1b[0m ${status.mempoolSize}`);
-    console.log(`  \x1b[32mMinted Tokens:\x1b[0m ${status.mintedTokens}`);
-    console.log(`  \x1b[32mActive Balances:\x1b[0m ${status.totalBalances}`);
-    console.log(`  \x1b[32mLocked Balances:\x1b[0m ${status.lockedBalances}`);
-    console.log(
-      `  \x1b[32mSignature Cache:\x1b[0m ${status.usedSignatures}/${this.MAX_USED_SIGNATURES}`
+    this.ui.logLeft(`\x1b[36m[BLOCKCHAIN STATUS]\x1b[0m`);
+    this.ui.logLeft(`  Height: \x1b[32m${status.height}\x1b[0m`);
+    this.ui.logLeft(`  Last Block: \x1b[33m${status.lastBlock}\x1b[0m`);
+    this.ui.logLeft(`  Mempool Size: \x1b[35m${status.mempoolSize}\x1b[0m`);
+    this.ui.logLeft(`  Minted Tokens: \x1b[36m${status.mintedTokens}\x1b[0m`);
+    this.ui.logLeft(
+      `  Active Balances: \x1b[32m${status.totalBalances}\x1b[0m`
     );
-    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+    this.ui.logLeft(
+      `  Locked Balances: \x1b[33m${status.lockedBalances}\x1b[0m`
+    );
+    this.ui.logLeft(
+      `  Signature Cache: \x1b[35m${status.usedSignatures}\x1b[0m/\x1b[36m${this.MAX_USED_SIGNATURES}\x1b[0m`
+    );
   }
 }
 

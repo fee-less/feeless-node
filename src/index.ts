@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-console.log(`\x1b[36m[NODE]\x1b[0m Starting Feeless node...`);
-
 import {
   Block,
   calculateMintFee,
@@ -18,18 +16,22 @@ import express from "express";
 import { config } from "dotenv";
 import cors from "cors";
 import fs from "fs";
+import { SplitTerminalUI } from "./ui.js";
 
-console.log(`\x1b[36m[NODE]\x1b[0m Reading configuration...`);
+const ui = new SplitTerminalUI();
+
+ui.logLeft(`\x1b[36m[NODE]\x1b[0m Starting Feeless node...`);
+ui.logLeft(`\x1b[36m[NODE]\x1b[0m Reading configuration...`);
 if (!fs.existsSync(".env")) {
   const defaultConfig = `PEER=ws://fee-less.com:6061,ws://fee-less.com:6062
 PEER_HTTP=http://fee-less.com:8000
 PORT=6061
 HTTP_PORT=8000`;
   fs.writeFileSync(".env", defaultConfig);
-  console.log(`\x1b[32m[NODE]\x1b[0m Created default .env configuration file`);
+  ui.logLeft(`\x1b[32m[NODE]\x1b[0m Created default .env configuration file`);
 }
 
-console.log(`\x1b[36m[NODE]\x1b[0m Initializing HTTP API server...`);
+ui.logLeft(`\x1b[36m[NODE]\x1b[0m Initializing HTTP API server...`);
 
 config();
 
@@ -44,7 +46,7 @@ function loadLocalBlocks() {
       .readdirSync("blockchain")
       .sort((a, b) => parseInt(a) - parseInt(b));
 
-    console.log(
+    ui.logRight(
       `\x1b[36m[NODE]\x1b[0m Found ${blockFiles.length} local blocks to load`
     );
 
@@ -54,7 +56,7 @@ function loadLocalBlocks() {
           JSON.parse(fs.readFileSync("blockchain/" + block, "utf-8"))
         );
       } catch (error: any) {
-        console.error(
+        ui.logRight(
           `\x1b[31m[NODE]\x1b[0m Failed to load block ${block}: ${error.message}`
         );
         throw error;
@@ -63,7 +65,7 @@ function loadLocalBlocks() {
   }
 
   if (blocks.length === 0 && !process.env.PEER) {
-    console.log(
+    ui.logRight(
       `\x1b[33m[NODE]\x1b[0m No local blocks found and no peers configured - creating genesis block`
     );
 
@@ -95,23 +97,23 @@ function loadLocalBlocks() {
       fs.mkdirSync("blockchain");
     }
     fs.writeFileSync("blockchain/0", JSON.stringify(genesisBlock));
-    console.log(`\x1b[32m[NODE]\x1b[0m Genesis block created and saved`);
+    ui.logLeft(`\x1b[32m[NODE]\x1b[0m Genesis block created and saved`);
   }
 
   return blocks;
 }
 
-console.log(`\x1b[36m[NODE]\x1b[0m Loading local blockchain...`);
+ui.logLeft(`\x1b[36m[NODE]\x1b[0m Loading local blockchain...`);
 let blocks = loadLocalBlocks();
-let bc = new Blockchain(blocks);
+let bc = new Blockchain(blocks, "blockchain", ui);
 await bc.waitForSync();
-console.log(
+ui.logLeft(
   `\x1b[32m[NODE]\x1b[0m Local blockchain validated - Height: ${bc.height}`
 );
 
 // Step 2 & 3: Sync missing blocks from peer
 if (process.env.PEER_HTTP) {
-  console.log(
+  ui.logLeft(
     `\x1b[36m[NODE]\x1b[0m Checking for blockchain updates from peer: ${process.env.PEER_HTTP}`
   );
   let syncing = true;
@@ -129,17 +131,17 @@ if (process.env.PEER_HTTP) {
       const remoteHeight = remoteData.height;
       const localHeight = bc.height;
 
-      console.log(
+      ui.logLeft(
         `\x1b[36m[NODE]\x1b[0m Remote height: ${remoteHeight}, Local height: ${localHeight}`
       );
 
       if (localHeight >= remoteHeight) {
-        console.log(`\x1b[32m[NODE]\x1b[0m Local blockchain is up to date`);
+        ui.logLeft(`\x1b[32m[NODE]\x1b[0m Local blockchain is up to date`);
         syncing = false;
         break;
       }
 
-      console.log(
+      ui.logLeft(
         `\x1b[33m[NODE]\x1b[0m Synchronization required - ${
           remoteHeight - localHeight
         } blocks behind`
@@ -150,7 +152,7 @@ if (process.env.PEER_HTTP) {
         const start = i;
         const end = Math.min(i + BATCH_SIZE, remoteHeight);
 
-        console.log(
+        ui.logRight(
           `\x1b[36m[NODE]\x1b[0m Fetching blocks ${start} to ${end - 1}...`
         );
 
@@ -186,7 +188,7 @@ if (process.env.PEER_HTTP) {
             );
             bc.lastBlock = block.hash;
             bc.height++;
-            console.log(`\x1b[32m[NODE]\x1b[0m Genesis block synchronized`);
+            ui.logRight(`\x1b[32m[NODE]\x1b[0m Genesis block synchronized`);
             continue;
           }
 
@@ -194,10 +196,10 @@ if (process.env.PEER_HTTP) {
           const ok = await bc.addBlock(block, true);
 
           if (!ok) {
-            console.error(
+            ui.logRight(
               `\x1b[31m[NODE]\x1b[0m CRITICAL: Downloaded block at height ${blockHeight} is invalid`
             );
-            console.error(
+            ui.logRight(
               `\x1b[31m[NODE]\x1b[0m Sync failed - stopping synchronization`
             );
             process.exit(1);
@@ -217,15 +219,15 @@ if (process.env.PEER_HTTP) {
 
       syncing = false;
     } catch (error: any) {
-      console.error(`\x1b[31m[NODE]\x1b[0m Sync error: ${error.message}`);
-      console.log(`\x1b[33m[NODE]\x1b[0m Continuing without sync...`);
+      ui.logRight(`\x1b[31m[NODE]\x1b[0m Sync error: ${error.message}`);
+      ui.logLeft(`\x1b[33m[NODE]\x1b[0m Continuing without sync...`);
       syncing = false;
     }
   }
 
   // Sync mempool
   try {
-    console.log(`\n\x1b[36m[NODE]\x1b[0m Synchronizing mempool...`);
+    ui.logRight(`\x1b[36m[NODE]\x1b[0m Synchronizing mempool...`);
     const mempoolResponse = await fetch(process.env.PEER_HTTP + "/mempool");
     if (mempoolResponse.ok) {
       const remoteTxs = await mempoolResponse.json();
@@ -233,25 +235,26 @@ if (process.env.PEER_HTTP) {
       remoteTxs.forEach((tx: Transaction) => {
         if (bc.pushTX(tx)) syncedTxs++;
       });
-      console.log(
+      ui.logRight(
         `\x1b[32m[NODE]\x1b[0m Mempool synchronized - ${syncedTxs}/${remoteTxs.length} transactions added`
       );
     }
   } catch (error: any) {
-    console.warn(
+    ui.logRight(
       `\x1b[33m[NODE]\x1b[0m Failed to sync mempool: ${error.message}`
     );
   }
 
-  console.log(`\x1b[32m[NODE]\x1b[0m Blockchain synchronization completed`);
+  ui.logLeft(`\x1b[32m[NODE]\x1b[0m Blockchain synchronization completed`);
 }
 
 // Start P2P and API
-console.log(`\x1b[36m[NODE]\x1b[0m Starting P2P network...`);
+ui.logLeft(`\x1b[36m[NODE]\x1b[0m Starting P2P network...`);
 const p2p = new P2PNetwork(
   process.env.PEER ?? "",
   parseInt(process.env.PORT ?? "6061"),
-  bc
+  bc,
+  ui
 );
 
 // API Routes with professional error handling
@@ -577,7 +580,7 @@ app.get("/search-tx/:query", (req, res) => {
 
 const httpPort = parseInt(process.env.HTTP_PORT ?? "8000");
 app.listen(httpPort, () => {
-  console.log(
+  ui.logLeft(
     `\x1b[36m[NODE]\x1b[0m Node initialization completed successfully`
   );
 });

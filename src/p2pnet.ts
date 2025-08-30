@@ -1,10 +1,11 @@
 import { WebSocketServer, WebSocket } from "ws";
-import { Block, getDiff, Transaction, EventPayload } from "feeless-utils";
+import { Block, Transaction, EventPayload } from "feeless-utils";
 import Blockchain from "./blockchain.js";
 import fs from "fs";
 import { onBlock, onMint, onTX } from "./webhooks.js";
 import readline from "readline";
 import CryptoJS from "crypto-js";
+import { SplitTerminalUI } from "./ui.js";
 
 interface SyncState {
   isActive: boolean;
@@ -35,12 +36,19 @@ class P2PNetwork {
   private rl?: readline.Interface;
   private isShuttingDown = false;
   private stopIncoming = false;
+  private ui: SplitTerminalUI;
 
-  constructor(peer: string, port: number, bc: Blockchain) {
+  constructor(
+    peer: string,
+    port: number,
+    bc: Blockchain,
+    ui: SplitTerminalUI | undefined
+  ) {
     this.bc = bc;
     this.peerUrls = peer ? peer.split(",").filter((url) => url.trim()) : [];
     this.wss = new WebSocketServer({ port });
     this.wscs = new Map();
+    this.ui = ui || new SplitTerminalUI();
 
     this.initializePeerConnections();
     this.initializeWebSocketServer();
@@ -48,30 +56,32 @@ class P2PNetwork {
     this.setupKeyboardListener();
     setInterval(this.watchDog.bind(this), this.WATCHDOG_INTERVAL);
 
-    console.log(`\x1b[36m[P2P]\x1b[0m Network initialized on port ${port}`);
+    this.ui.logLeft(
+      `\x1b[36m[P2P]\x1b[0m Network initialized on port \x1b[33m${port}\x1b[0m`
+    );
     if (this.peerUrls.length > 0) {
-      console.log(
-        `\x1b[36m[P2P]\x1b[0m Configured peers: ${this.peerUrls.length}`
+      this.ui.logLeft(
+        `\x1b[36m[P2P]\x1b[0m Configured peers: \x1b[32m${this.peerUrls.length}\x1b[0m`
       );
     }
-    console.log(
-      `\x1b[36m[P2P]\x1b[0m Press 'p' to print network status, 'b' to print blockchain status, 'q' to quit gracefully`
+    this.ui.logLeft(
+      `\x1b[36m[P2P]\x1b[0m Press '\x1b[33mp\x1b[0m' to print network status, '\x1b[33mb\x1b[0m' to print blockchain status, '\x1b[33mq\x1b[0m' to quit gracefully`
     );
   }
 
   private setupProcessHandlers(): void {
     // Handle graceful shutdown on process termination
     process.on("SIGINT", async () => {
-      console.log(
-        "\n\x1b[33m[P2P]\x1b[0m Received SIGINT, shutting down gracefully..."
+      this.ui.logLeft(
+        "\n\x1b[36m[P2P]\x1b[0m Received SIGINT, shutting down gracefully..."
       );
       await this.shutdown();
       process.exit(0);
     });
 
     process.on("SIGTERM", async () => {
-      console.log(
-        "\n\x1b[33m[P2P]\x1b[0m Received SIGTERM, shutting down gracefully..."
+      this.ui.logLeft(
+        "\n\x1b[36m[P2P]\x1b[0m Received SIGTERM, shutting down gracefully..."
       );
       await this.shutdown();
       process.exit(0);
@@ -79,17 +89,16 @@ class P2PNetwork {
 
     // Handle uncaught exceptions
     process.on("uncaughtException", async (error) => {
-      console.error("\x1b[31m[P2P]\x1b[0m Uncaught exception:", error);
+      this.ui.logRight(
+        "\x1b[31m[P2P]\x1b[0m Uncaught exception: " + error.toString()
+      );
       await this.shutdown();
       process.exit(1);
     });
 
     process.on("unhandledRejection", async (reason, promise) => {
-      console.error(
-        "\x1b[31m[P2P]\x1b[0m Unhandled rejection at:",
-        promise,
-        "reason:",
-        reason
+      this.ui.logRight(
+        `\x1b[31m[P2P]\x1b[0m Unhandled rejection at: ${promise.toString()} reason: ${reason}`
       );
       await this.shutdown();
       process.exit(1);
@@ -117,16 +126,15 @@ class P2PNetwork {
       } else if (key && key.name === "b") {
         this.bc.printStatus();
       } else if (key && key.name === "q") {
-        console.log(
-          "\n\x1b[33m[P2P]\x1b[0m Graceful shutdown initiated by user..."
-        );
+        this.ui.logLeft("\n[P2P] Graceful shutdown initiated by user...");
         this.shutdown().then(() => {
           process.exit(0);
         });
       } else if (key && key.name === "s") {
         this.stopIncoming = !this.stopIncoming;
-        process.stdout.write(
-          "\rAccepting from peers: " + !this.stopIncoming + "\n"
+        this.ui.logLeft(
+          `\x1b[36m[P2P]\x1b[0m Accepting from peers: \x1b[33m${!this
+            .stopIncoming}\x1b[0m`
         );
       }
     });
@@ -143,30 +151,28 @@ class P2PNetwork {
           const payload: EventPayload = JSON.parse(data.toString());
           this.onPeerPayload(payload);
         } catch (e: any) {
-          console.error(
+          this.ui.logRight(
             `\x1b[31m[P2P]\x1b[0m Invalid payload received: ${e.message}`
           );
         }
       });
 
       ws.on("error", (err) => {
-        console.error(
-          `\x1b[31m[P2P]\x1b[0m WebSocket client error: ${err.message}`
-        );
+        this.ui.logRight(`[P2P] WebSocket client error: ${err.message}`);
       });
     });
 
     this.wss.on("error", (err) => {
-      console.error(
-        `\x1b[31m[P2P]\x1b[0m WebSocket server error: ${err.message}`
-      );
+      this.ui.logRight(`[P2P] WebSocket server error: ${err.message}`);
     });
   }
 
   private createPeerSocket(peerUrl: string): WebSocket | null {
     try {
       if (!this.silencedPeers.has(peerUrl)) {
-        console.log(`\x1b[36m[P2P]\x1b[0m Connecting to peer: ${peerUrl}`);
+        this.ui.logLeft(
+          `\x1b[36m[P2P]\x1b[0m Connecting to peer: \x1b[33m${peerUrl}\x1b[0m`
+        );
       }
       const ws = new WebSocket(peerUrl);
       this.wscs.set(peerUrl, ws);
@@ -177,8 +183,8 @@ class P2PNetwork {
           this.onPeerPayload(payload);
         } catch (e: any) {
           if (!this.silencedPeers.has(peerUrl)) {
-            console.error(
-              `\x1b[31m[P2P]\x1b[0m Peer message error from ${peerUrl}: ${e.message}`
+            this.ui.logRight(
+              `\x1b[31m[P2P]\x1b[0m Peer message error from \x1b[33m${peerUrl}\x1b[0m: ${e.message}`
             );
           }
         }
@@ -191,11 +197,13 @@ class P2PNetwork {
         // Un-silence the peer if it was silenced
         if (this.silencedPeers.has(peerUrl)) {
           this.silencedPeers.delete(peerUrl);
-          console.log(
-            `\x1b[32m[P2P]\x1b[0m Peer ${peerUrl} reconnected and un-silenced`
+          this.ui.logLeft(
+            `\x1b[32m[P2P]\x1b[0m Peer \x1b[33m${peerUrl}\x1b[0m reconnected and un-silenced`
           );
         } else {
-          console.log(`\x1b[32m[P2P]\x1b[0m Connected to peer: ${peerUrl}`);
+          this.ui.logLeft(
+            `\x1b[32m[P2P]\x1b[0m Connected to peer: \x1b[33m${peerUrl}\x1b[0m`
+          );
         }
 
         this.startHeartbeat(ws, peerUrl);
@@ -204,8 +212,8 @@ class P2PNetwork {
 
       ws.addEventListener("close", (event) => {
         if (!this.silencedPeers.has(peerUrl)) {
-          console.log(
-            `\x1b[33m[P2P]\x1b[0m Disconnected from peer: ${peerUrl} (code: ${event.code})`
+          this.ui.logLeft(
+            `\x1b[33m[P2P]\x1b[0m Disconnected from peer: \x1b[36m${peerUrl}\x1b[0m (code: \x1b[31m${event.code}\x1b[0m)`
           );
         }
         this.wscs.delete(peerUrl);
@@ -214,9 +222,10 @@ class P2PNetwork {
 
       ws.addEventListener("error", (event) => {
         if (!this.silencedPeers.has(peerUrl)) {
-          console.error(
-            `\x1b[31m[P2P]\x1b[0m Peer connection error for ${peerUrl}:`,
-            event.error || event.message
+          this.ui.logRight(
+            `\x1b[31m[P2P]\x1b[0m Peer connection error for \x1b[33m${peerUrl}\x1b[0m: ${
+              event.error || event.message
+            }`
           );
         }
       });
@@ -224,8 +233,8 @@ class P2PNetwork {
       return ws;
     } catch (error: any) {
       if (!this.silencedPeers.has(peerUrl)) {
-        console.error(
-          `\x1b[31m[P2P]\x1b[0m Failed to create peer socket for ${peerUrl}: ${error.message}`
+        this.ui.logRight(
+          `\x1b[31m[P2P]\x1b[0m Failed to create peer socket for \x1b[33m${peerUrl}\x1b[0m: ${error.message}`
         );
       }
       return null;
@@ -247,8 +256,8 @@ class P2PNetwork {
         missedPings++;
         if (missedPings >= MAX_MISSED_PINGS) {
           if (!this.silencedPeers.has(peerUrl)) {
-            console.warn(
-              `\x1b[33m[P2P]\x1b[0m Peer ${peerUrl} not responding after ${MAX_MISSED_PINGS} pings, terminating connection`
+            this.ui.logLeft(
+              `\x1b[31m[P2P]\x1b[0m Peer \x1b[33m${peerUrl}\x1b[0m not responding after \x1b[31m${MAX_MISSED_PINGS}\x1b[0m pings, terminating connection`
             );
           }
           clearInterval(interval);
@@ -264,8 +273,8 @@ class P2PNetwork {
         }
       } catch (err: any) {
         if (!this.silencedPeers.has(peerUrl)) {
-          console.error(
-            `\x1b[31m[P2P]\x1b[0m Failed to ping ${peerUrl}: ${err.message}`
+          this.ui.logRight(
+            `\x1b[31m[P2P]\x1b[0m Failed to ping \x1b[33m${peerUrl}\x1b[0m: ${err.message}`
           );
         }
         clearInterval(interval);
@@ -300,21 +309,21 @@ class P2PNetwork {
       !this.silencedPeers.has(peerUrl)
     ) {
       this.silencedPeers.add(peerUrl);
-      console.log(
-        `\x1b[33m[P2P]\x1b[0m Peer ${peerUrl} silenced after ${this.MAX_RECONNECT_ATTEMPTS} failed reconnection attempts`
+      this.ui.logLeft(
+        `\x1b[31m[P2P]\x1b[0m Peer \x1b[33m${peerUrl}\x1b[0m silenced after \x1b[31m${this.MAX_RECONNECT_ATTEMPTS}\x1b[0m failed reconnection attempts`
       );
     }
 
     if (!this.silencedPeers.has(peerUrl)) {
-      console.log(
-        `\x1b[36m[P2P]\x1b[0m Scheduling reconnection to ${peerUrl} in ${this.RECONNECT_DELAY}ms (attempt ${newAttempts})`
+      this.ui.logLeft(
+        `\x1b[36m[P2P]\x1b[0m Scheduling reconnection to \x1b[33m${peerUrl}\x1b[0m in \x1b[32m${this.RECONNECT_DELAY}ms\x1b[0m (attempt \x1b[33m${newAttempts}\x1b[0m)`
       );
     }
 
     const timeout = setTimeout(() => {
       if (!this.silencedPeers.has(peerUrl)) {
-        console.log(
-          `\x1b[36m[P2P]\x1b[0m Attempting to reconnect to peer: ${peerUrl}`
+        this.ui.logLeft(
+          `\x1b[36m[P2P]\x1b[0m Attempting to reconnect to peer: \x1b[33m${peerUrl}\x1b[0m`
         );
       }
       this.createPeerSocket(peerUrl);
@@ -346,14 +355,16 @@ class P2PNetwork {
             )
           );
           this.lastSeenPush = CryptoJS.SHA256(JSON.stringify(push)).toString();
-          console.log("\n\x1b[33m[SYNC]\x1b[0m Pushing peer to longest chain");
+          this.ui.logLeft(
+            "\n\x1b[36m[SYNC]\x1b[0m Pushing peer to longest chain"
+          );
         }
         return;
       }
 
       await this.sync();
     } catch (error: any) {
-      console.error(`\x1b[31m[SYNC]\x1b[0m Watchdog failed: ${error.message}`);
+      this.ui.logRight(`[SYNC] Watchdog failed: ${error.message}`);
     }
   }
 
@@ -363,20 +374,25 @@ class P2PNetwork {
     this.syncState.isActive = true;
     this.syncState.targetHeight = remote;
     try {
-      console.log("[SYNC] Syncing to longer chain...");
+      this.ui.logLeft("\x1b[36m[SYNC]\x1b[0m Syncing to longer chain...");
       let fork = 0;
       for (let i = this.bc.height - 1; i >= 0; i--) {
         if (
           (await this.fetchRemoteBlock(i))!.hash === this.bc.getBlock(i).hash
         ) {
           fork = i + 1;
-          this.bc.height = fork;
-          this.bc.lastBlock = this.bc.getBlock(i).hash;
           break;
         }
       }
       this.syncState.startHeight = fork;
-      console.log("[SYNC] Orphaning " + (this.bc.height - fork + 1) + "block" + ((this.bc.height - fork + 1) === 1 ? "" : "s"));
+      this.ui.logLeft(
+        `\x1b[36m[SYNC]\x1b[0m Orphaning \x1b[31m${
+          this.bc.height - fork + 1
+        }\x1b[0m block${this.bc.height - fork + 1 === 1 ? "" : "s"}`
+      );
+
+      this.bc.height = fork; // first invalid
+      this.bc.lastBlock = this.bc.getBlock(fork - 1).hash;
 
       this.bc.mempool = [];
 
@@ -385,19 +401,23 @@ class P2PNetwork {
         if (!block) throw new Error();
         block.transactions.forEach((tx) => this.bc.pushTX(tx));
         if (!(await this.bc.addBlock(block, true))) throw new Error();
-        process.stdout.write(
-          `\r[SYNC] Restoring longest chain ${i + (remote - fork)}/${
-            remote - fork
-          }`
+        fs.writeFileSync("blockchain/" + i, JSON.stringify(block));
+        this.ui.logLeft(
+          `\x1b[36m[SYNC]\x1b[0m Restoring longest chain \x1b[32m${
+            i + (remote - fork)
+          }\x1b[0m/\x1b[33m${remote - fork}\x1b[0m`,
+          true
         );
       }
 
       (await this.fetchRemoteMempool()).forEach((tx) => this.bc.pushTX(tx));
 
-      console.log("[SYNC] Chain up to date with longest chain known.`");
+      this.ui.logLeft(
+        "\x1b[32m[SYNC]\x1b[0m Chain up to date with longest chain known."
+      );
       this.syncState.isActive = false;
     } catch (e) {
-      console.log("[SYNC] Error syncing longer chain`");
+      this.ui.logLeft("\x1b[31m[SYNC]\x1b[0m Error syncing longer chain");
       this.syncState.isActive = false;
     }
   }
@@ -411,7 +431,7 @@ class P2PNetwork {
       const data = await response.json();
       return data.height;
     } catch (error: any) {
-      console.error(
+      this.ui.logRight(
         `\x1b[31m[SYNC]\x1b[0m Failed to fetch remote height: ${error.message}`
       );
       return null;
@@ -426,8 +446,8 @@ class P2PNetwork {
       }
       return await response.json();
     } catch (error: any) {
-      console.error(
-        `\x1b[31m[SYNC]\x1b[0m Failed to fetch block ${height}: ${error.message}`
+      this.ui.logRight(
+        `\x1b[31m[SYNC]\x1b[0m Failed to fetch block \x1b[33m${height}\x1b[0m: ${error.message}`
       );
       return null;
     }
@@ -441,7 +461,7 @@ class P2PNetwork {
       }
       return await response.json();
     } catch (error: any) {
-      console.error(
+      this.ui.logRight(
         `\x1b[31m[SYNC]\x1b[0m Failed to fetch remote mempool: ${error.message}`
       );
       return [];
@@ -459,8 +479,8 @@ class P2PNetwork {
         JSON.stringify(block, null, 2)
       );
     } catch (error: any) {
-      console.error(
-        `\x1b[31m[SYNC]\x1b[0m Failed to persist block ${height}: ${error.message}`
+      this.ui.logRight(
+        `\x1b[31m[SYNC]\x1b[0m Failed to persist block \x1b[33m${height}\x1b[0m: ${error.message}`
       );
       throw error;
     }
@@ -503,8 +523,8 @@ class P2PNetwork {
           ).toString();
 
           if (subChain.length > 15) {
-            console.warn(
-              `\x1b[33m[P2P]\x1b[0m Received pushed chain is too long (${subChain.length} blocks). Ignoring.`
+            this.ui.logLeft(
+              `\x1b[31m[P2P]\x1b[0m Received pushed chain is too long (\x1b[33m${subChain.length}\x1b[0m blocks). Ignoring.`
             );
             return;
           }
@@ -514,44 +534,40 @@ class P2PNetwork {
             i--
           ) {
             if (this.bc.getBlock(i).hash === subChain[0].prev_hash) {
-              console.log(
-                `\x1b[36m[P2P]\x1b[0m Orphaning local chain starting from block ${
+              this.ui.logLeft(
+                `\x1b[31m[P2P]\x1b[0m Orphaning local chain starting from block \x1b[33m${
                   i + 1
-                }...`
+                }\x1b[0m...`
               );
               const sh = this.bc.height;
               const slb = this.bc.lastBlock;
               this.bc.height = i + 1;
               this.bc.lastBlock = this.bc.getBlock(i).hash;
 
-              let failed = false;
+              let _i = this.bc.height;
               for (const b of subChain) {
                 b.transactions.map((tx) => this.bc.pushTX(tx));
                 if (!(await this.bc.addBlock(b, true))) {
                   this.bc.height = sh;
                   this.bc.lastBlock = slb;
-                  console.warn(
-                    `\x1b[31m[P2P]\x1b[0m Failed to apply pushed block ${b.hash.substring(
+                  this.ui.logRight(
+                    `\x1b[31m[P2P]\x1b[0m Failed to apply pushed block \x1b[33m${b.hash.substring(
                       0,
                       16
-                    )}...`
+                    )}...\x1b[0m`
                   );
-                  failed = true;
                   break;
+                } else {
+                  fs.writeFileSync("blockchain/" + _i, JSON.stringify(b));
+                  _i++;
                 }
-              }
-              if (failed) break;
-              let _i = i + 1;
-              for (const b of subChain) {
-                fs.writeFileSync("blockchain/" + _i, JSON.stringify(b));
-                _i++;
               }
 
               this.toPeers(payload);
-              console.log(
-                `\x1b[32m[P2P]\x1b[0m Successfully replaced local chain with pushed chain from block ${
+              this.ui.logLeft(
+                `\x1b[32m[P2P]\x1b[0m Successfully replaced local chain with pushed chain from block \x1b[33m${
                   i + 1
-                } to ${i + subChain.length}`
+                }\x1b[0m to \x1b[36m${i + subChain.length}\x1b[0m`
               );
               break;
             }
@@ -560,13 +576,13 @@ class P2PNetwork {
           break;
 
         default:
-          console.warn(
-            `\x1b[33m[P2P]\x1b[0m Unknown event type received: ${payload.event}`
+          this.ui.logLeft(
+            `\x1b[31m[P2P]\x1b[0m Unknown event type received: \x1b[33m${payload.event}\x1b[0m`
           );
       }
     } catch (error: any) {
-      console.error(
-        `\x1b[31m[P2P]\x1b[0m Error processing peer payload:`, error
+      this.ui.logRight(
+        `\x1b[31m[P2P]\x1b[0m Error processing peer payload: ${error.toString()}`
       );
     }
   }
@@ -584,8 +600,8 @@ class P2PNetwork {
         }
       } catch (error: any) {
         if (!this.silencedPeers.has(peerUrl)) {
-          console.error(
-            `\x1b[31m[P2P]\x1b[0m Failed to send to peer ${peerUrl}: ${error.message}`
+          this.ui.logRight(
+            `[P2P] Failed to send to peer ${peerUrl}: ${error.message}`
           );
         }
       }
@@ -599,15 +615,13 @@ class P2PNetwork {
           sentCount++;
         }
       } catch (error: any) {
-        console.error(
-          `\x1b[31m[P2P]\x1b[0m Failed to send to client: ${error.message}`
-        );
+        this.ui.logRight(`[P2P] Failed to send to client: ${error.message}`);
       }
     });
 
     if (sentCount === 0 && data.event === "block") {
-      console.warn(
-        `\x1b[33m[P2P]\x1b[0m No peers available to broadcast ${data.event}`
+      this.ui.logLeft(
+        `\x1b[31m[P2P]\x1b[0m No peers available to broadcast \x1b[33m${data.event}\x1b[0m`
       );
     }
   }
@@ -634,18 +648,19 @@ class P2PNetwork {
 
       const success = this.bc.pushTX(tx);
       if (success) {
-        process.stdout.write(
-          `\r\x1b[32m[TX]\x1b[0m Transaction accepted from ${tx.sender.substring(
+        this.ui.logRight(
+          `\x1b[32m[TX]\x1b[0m Transaction accepted from \x1b[36m${tx.sender.substring(
             0,
             8
-          )}...`
+          )}...\x1b[0m`,
+          true
         );
         onTX(tx);
       }
 
       return success;
     } catch (error: any) {
-      console.error(
+      this.ui.logRight(
         `\x1b[31m[TX]\x1b[0m Error processing incoming transaction: ${error.message}`
       );
       return false;
@@ -676,17 +691,17 @@ class P2PNetwork {
           }
         }
       } else {
-        console.warn(
-          `\x1b[33m[BLOCK]\x1b[0m Block rejected: ${block.hash.substring(
+        this.ui.logRight(
+          `\x1b[31m[BLOCK]\x1b[0m Block rejected: \x1b[33m${block.hash.substring(
             0,
             16
-          )}...`
+          )}...\x1b[0m`
         );
       }
 
       return success;
     } catch (error: any) {
-      console.error(
+      this.ui.logRight(
         `\x1b[31m[BLOCK]\x1b[0m Error processing incoming block: ${error.message}`
       );
       return false;
@@ -698,6 +713,7 @@ class P2PNetwork {
     if (this.isShuttingDown) {
       return;
     }
+    this.ui.shutdown();
 
     this.isShuttingDown = true;
     console.log(`\x1b[36m[P2P]\x1b[0m Initiating network shutdown...`);
@@ -716,7 +732,9 @@ class P2PNetwork {
 
     // Close all peer connections
     this.wscs.forEach((ws, peerUrl) => {
-      console.log(`\x1b[36m[P2P]\x1b[0m Closing connection to ${peerUrl}`);
+      console.log(
+        `\x1b[33m[P2P]\x1b[0m Closing connection to \x1b[36m${peerUrl}\x1b[0m`
+      );
       ws.close(1000, "Shutdown");
     });
     this.wscs.clear();
@@ -728,6 +746,7 @@ class P2PNetwork {
           `\x1b[32m[P2P]\x1b[0m Network shutdown completed successfully`
         );
         resolve();
+        process.exit(0);
       });
     });
   }
@@ -752,45 +771,39 @@ class P2PNetwork {
   // Network diagnostics
   printNetworkStatus(): void {
     const status = this.getNetworkStatus();
-    const timestamp = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .substring(0, 19);
-
-    console.log(`\n\x1b[36m[P2P NETWORK STATUS]\x1b[0m ${timestamp}`);
-    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    console.log(
-      `  \x1b[32mConnected Peers:\x1b[0m ${status.connectedPeers.length}`
+    this.ui.logLeft(`\x1b[36m[P2P NETWORK STATUS]\x1b[0m`);
+    this.ui.logLeft(
+      `  Connected Peers: \x1b[32m${status.connectedPeers.length}\x1b[0m`
     );
 
     if (status.connectedPeers.length > 0) {
       status.connectedPeers.forEach((peer, index) => {
-        console.log(`    ${index + 1}. ${peer}`);
+        this.ui.logLeft(`    \x1b[36m${index + 1}. ${peer}\x1b[0m`);
       });
     }
 
-    console.log(
-      `  \x1b[32mIncoming Connections:\x1b[0m ${status.incomingConnections}`
+    this.ui.logLeft(
+      `  Incoming Connections: \x1b[33m${status.incomingConnections}\x1b[0m`
     );
-    console.log(
-      `  \x1b[32mTotal Connections:\x1b[0m ${status.totalConnections}`
+    this.ui.logLeft(
+      `  Total Connections: \x1b[32m${status.totalConnections}\x1b[0m`
     );
-    console.log(
-      `  \x1b[32mBlockchain Height:\x1b[0m ${status.blockchainHeight}`
+    this.ui.logLeft(
+      `  Blockchain Height: \x1b[36m${status.blockchainHeight}\x1b[0m`
     );
-    console.log(`  \x1b[32mMempool Size:\x1b[0m ${status.mempoolSize}`);
-    console.log(
-      `  \x1b[32mSync Active:\x1b[0m ${
-        status.syncActive ? "\x1b[33mYes\x1b[0m" : "\x1b[32mNo\x1b[0m"
+    this.ui.logLeft(`  Mempool Size: \x1b[33m${status.mempoolSize}\x1b[0m`);
+    this.ui.logLeft(
+      `  Sync Active: ${
+        status.syncActive ? "\x1b[32mYes\x1b[0m" : "\x1b[31mNo\x1b[0m"
       }`
     );
 
     if (status.silencedPeers.length > 0) {
-      console.log(
-        `  \x1b[33mSilenced Peers:\x1b[0m ${status.silencedPeers.length}`
+      this.ui.logLeft(
+        `  Silenced Peers: \x1b[31m${status.silencedPeers.length}\x1b[0m`
       );
       status.silencedPeers.forEach((peer, index) => {
-        console.log(`    ${index + 1}. ${peer}`);
+        this.ui.logLeft(`    \x1b[31m${index + 1}. ${peer}\x1b[0m`);
       });
     }
 
@@ -803,12 +816,14 @@ class P2PNetwork {
                 100
             )
           : 0;
-      console.log(
-        `  \x1b[33mSync Progress:\x1b[0m ${progress}% (${this.bc.height}/${this.syncState.targetHeight})`
+      this.ui.logLeft(
+        `  Sync Progress: \x1b[36m${progress}%\x1b[0m (\x1b[32m${this.bc.height}\x1b[0m/\x1b[33m${this.syncState.targetHeight}\x1b[0m)`
       );
     }
 
-    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+    this.ui.logLeft(
+      `\x1b[33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m\n`
+    );
   }
 }
 
