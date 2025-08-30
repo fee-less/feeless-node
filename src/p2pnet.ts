@@ -515,7 +515,9 @@ class P2PNetwork {
           const subChain = payload.data as Block[];
           if (
             CryptoJS.SHA256(JSON.stringify(subChain)).toString() ===
-            this.lastSeenPush || subChain[subChain.length - 1].hash === this.bc.getBlock(this.bc.height - 1).hash
+              this.lastSeenPush ||
+            subChain[subChain.length - 1].hash ===
+              this.bc.getBlock(this.bc.height - 1).hash
           )
             return;
           this.lastSeenPush = CryptoJS.SHA256(

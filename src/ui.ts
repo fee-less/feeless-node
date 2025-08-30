@@ -10,8 +10,13 @@ export class SplitTerminalUI {
   private leftScrollOffset = 0;
   private rightScrollOffset = 0;
   private rl: readline.Interface | null = null;
+  private noui = false;
 
   constructor() {
+    if (process.argv.includes("--noui")) {
+      this.noui = true;
+    }
+
     this.terminalWidth = process.stdout.columns || 120;
     this.terminalHeight = process.stdout.rows || 30;
     this.splitPosition = Math.floor(this.terminalWidth / 2);
@@ -19,6 +24,7 @@ export class SplitTerminalUI {
   }
 
   private initialize(): void {
+    if (this.noui) return;
     // Clear screen and hide cursor
     process.stdout.write("\x1b[2J\x1b[H\x1b[?25l");
 
@@ -50,6 +56,7 @@ export class SplitTerminalUI {
 
   private setupInputHandlers(): void {
     if (!this.rl) return;
+    if (this.noui) return;
 
     // Set raw mode to capture individual keypresses
     process.stdin.setRawMode(true);
@@ -299,6 +306,11 @@ export class SplitTerminalUI {
   }
 
   public logLeft(message: string, overwrite: boolean = false): void {
+    if (this.noui) {
+      console.log(overwrite ? "\r" : "" + message);
+      return;
+    }
+
     if (overwrite && this.leftBuffer.length > 0) {
       this.leftBuffer[this.leftBuffer.length - 1] = message;
     } else {
@@ -319,6 +331,11 @@ export class SplitTerminalUI {
   }
 
   public logRight(message: string, overwrite: boolean = false): void {
+    if (this.noui) {
+      console.log(overwrite ? "\r" : "" + message);
+      return;
+    }
+    
     if (overwrite && this.rightBuffer.length > 0) {
       this.rightBuffer[this.rightBuffer.length - 1] = message;
     } else {
@@ -339,7 +356,7 @@ export class SplitTerminalUI {
   }
 
   public shutdown(): void {
-    if (this.isInitialized) {
+    if (this.isInitialized && !this.noui) {
       // Restore terminal state
       process.stdin.setRawMode(false);
       if (this.rl) {
