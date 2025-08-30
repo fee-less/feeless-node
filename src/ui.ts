@@ -322,7 +322,7 @@ export class SplitTerminalUI {
     if (overwrite && this.rightBuffer.length > 0) {
       this.rightBuffer[this.rightBuffer.length - 1] = message;
     } else {
-      this.rightBuffer.push(message);
+      this.rightBuffer.push(message);3
     }
 
     // Keep buffer size manageable

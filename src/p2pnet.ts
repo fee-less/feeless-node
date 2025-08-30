@@ -356,7 +356,7 @@ class P2PNetwork {
           );
           this.lastSeenPush = CryptoJS.SHA256(JSON.stringify(push)).toString();
           this.ui.logLeft(
-            "\n\x1b[36m[SYNC]\x1b[0m Pushing peer to longest chain"
+            "\x1b[36m[SYNC]\x1b[0m Pushing peer to longest chain"
           );
         }
         return;
