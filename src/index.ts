@@ -22,7 +22,7 @@ const ui = new SplitTerminalUI();
 ui.logLeft(`\x1b[36m[NODE]\x1b[0m Starting Feeless node...`);
 ui.logLeft(`\x1b[36m[NODE]\x1b[0m Reading configuration...`);
 if (!fs.existsSync(".env")) {
-  const defaultConfig = `PEER=ws://node1.fee-less.com,ws://node2.fee-less.com
+  const defaultConfig = `PEER=ws://node1.fee-less.com/ws,ws://node2.fee-less.com/ws
 PEER_HTTP=http://node1.fee-less.com
 PORT=6061
 HTTP_PORT=8000`;
