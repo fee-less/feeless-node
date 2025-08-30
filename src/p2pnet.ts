@@ -515,7 +515,7 @@ class P2PNetwork {
           const subChain = payload.data as Block[];
           if (
             CryptoJS.SHA256(JSON.stringify(subChain)).toString() ===
-            this.lastSeenPush
+            this.lastSeenPush || subChain[subChain.length - 1].hash === this.bc.getBlock(this.bc.height - 1).hash
           )
             return;
           this.lastSeenPush = CryptoJS.SHA256(
@@ -616,6 +616,16 @@ class P2PNetwork {
         }
       } catch (error: any) {
         this.ui.logRight(`[P2P] Failed to send to client: ${error.message}`);
+      }
+    });
+    this.wscs.forEach((ws) => {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(message);
+          sentCount++;
+        }
+      } catch (error: any) {
+        this.ui.logRight(`[P2P] Failed to send to peer: ${error.message}`);
       }
     });
 
