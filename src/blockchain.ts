@@ -204,6 +204,23 @@ class Blockchain {
     includeMempoolBalance = false,
     isBlockValidation = false
   ) {
+    const { sender } = tx;
+
+    const senderInMempool =
+      sender !== "network" &&
+      sender !== "mint" &&
+      !isBlockValidation &&
+      this.mempool.some(
+        (pendingTx: Transaction) => pendingTx.sender === sender
+      );
+
+    if (senderInMempool) {
+      this.ui.logRight(
+        `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - sender is already in mempool`
+      );
+      return;
+    }
+
     if (!Number.isInteger(tx.amount) || tx.amount <= 0) {
       this.ui.logRight(
         `\x1b[31m[BLOCKCHAIN]\x1b[0m Transaction rejected - Invalid amount: \x1b[33m${tx.amount}\x1b[0m`

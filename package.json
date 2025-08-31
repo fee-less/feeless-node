@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "start": "tsc && node dist/index.js",
+    "start": "tsc && node dist/index.js --noui",
     "miner": "tsc && node dist/miner.js",
     "miner2": "tsc && node dist/miner2.js",
     "client": "node dist/client.js"

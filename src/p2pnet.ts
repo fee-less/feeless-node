@@ -647,17 +647,6 @@ class P2PNetwork {
         // 1 min past, 5 sec future tolerance
         return false;
       }
-
-      // Check for duplicate pending transactions from same sender
-      const hasPendingTx = this.bc.mempool.some(
-        (pendingTx: Transaction) =>
-          tx.sender === pendingTx.sender && pendingTx.signature === tx.signature
-      );
-
-      if (hasPendingTx) {
-        return false;
-      }
-
       const success = this.bc.pushTX(tx);
       if (success) {
         this.ui.logRight(
