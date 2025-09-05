@@ -2,6 +2,7 @@ import pkg from "elliptic";
 import fs from "fs";
 const { ec: EC } = pkg;
 import cryptoJS from "crypto-js";
+const { SHA256 } = cryptoJS;
 import {
   Block,
   Transaction,
@@ -16,7 +17,6 @@ import {
   TAIL,
 } from "feeless-utils";
 import { SplitTerminalUI } from "./ui.js";
-const { SHA256 } = cryptoJS;
 
 const ec = new EC("secp256k1");
 
@@ -672,15 +672,21 @@ class Blockchain {
     }
 
     // Check if the provided hash matches the calculated hash of the block
-    if (
-      !skipHashing &&
-      (
-        await hashArgon(JSON.stringify({ ...block, hash: "", signature: "" }))
-      ).toString(16) !== block.hash
-    ) {
-      const calculatedHash = (
-        await hashArgon(JSON.stringify({ ...block, hash: "", signature: "" }))
-      ).toString(16);
+    const calculatedHash = (
+      await hashArgon(
+        JSON.stringify({
+          ...block,
+          hash: "",
+          signature: "",
+          transactions:
+            block.timestamp >= 1757246400000
+              ? SHA256(JSON.stringify(block.transactions)).toString()
+              : block.transactions,
+        })
+      )
+    ).toString(16);
+
+    if (!skipHashing && calculatedHash !== block.hash) {
       this.ui.logRight(
         `\x1b[31m[BLOCKCHAIN]\x1b[0m Block rejected - Hash mismatch (calculated: \x1b[33m${calculatedHash.substring(
           0,

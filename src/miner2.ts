@@ -11,7 +11,8 @@ import {
   Transaction,
 } from "feeless-utils";
 import fs from "fs";
-
+import cryptoJS from "crypto-js";
+const { SHA256 } = cryptoJS;
 const CONFIG_PATH = "miner.json";
 const CPU_COUNT = os.cpus().length;
 
@@ -190,14 +191,22 @@ if (cluster.isPrimary) {
         signature: "",
         proposer: fc.getPublic(),
         hash: "",
-        diff: diff.toString(16)
+        diff: diff.toString(16),
       };
 
       nonce++;
       hashes++; // Count hash attempt
 
       const hash = await hashArgon(
-        JSON.stringify({ ...block, hash: "", signature: "" })
+        JSON.stringify({
+          ...block,
+          hash: "",
+          signature: "",
+          transactions:
+            block.timestamp >= 1757246400000
+              ? SHA256(JSON.stringify(block.transactions)).toString()
+              : block.transactions,
+        })
       );
 
       if (halted) return;
