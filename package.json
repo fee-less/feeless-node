@@ -6,6 +6,8 @@
   "main": "dist/index.js",
   "scripts": {
     "start": "tsc && node dist/index.js",
+    "start-cheap": "tsc && node dist/index.js --api-cheap",
+    "start-noui": "tsc && node dist/index.js --noui",
     "miner": "tsc && node dist/miner.js",
     "miner2": "tsc && node dist/miner2.js",
     "client": "node dist/client.js"

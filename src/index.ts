@@ -17,6 +17,8 @@ import cors from "cors";
 import fs from "fs";
 import { SplitTerminalUI } from "./ui.js";
 
+const allowIntensiveAPI = !process.argv.includes("--api-cheap");
+
 const ui = new SplitTerminalUI();
 
 ui.logLeft(`\x1b[36m[NODE]\x1b[0m Starting Feeless node...`);
@@ -249,7 +251,7 @@ if (process.env.PEER_HTTP) {
 
 // Start P2P and API
 ui.logLeft(`\x1b[36m[NODE]\x1b[0m Starting P2P network...`);
-const p2p = new P2PNetwork(
+new P2PNetwork(
   process.env.PEER ?? "",
   parseInt(process.env.PORT ?? "6061"),
   bc,
@@ -322,6 +324,13 @@ app.get("/mempool", (_, res) => {
 });
 
 app.get("/diff", (_, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     res.json({
       diff: getDiff(bc.getTail()).toString(16),
@@ -332,6 +341,13 @@ app.get("/diff", (_, res) => {
 });
 
 app.get("/mint-fee", (_, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     res.json({ fee: calculateMintFee(bc.height, bc.mintedTokens.size) });
   } catch (error: any) {
@@ -340,6 +356,13 @@ app.get("/mint-fee", (_, res) => {
 });
 
 app.get("/reward", (_, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     res.json({ reward: calculateReward(bc.height) });
   } catch (error: any) {
@@ -348,6 +371,13 @@ app.get("/reward", (_, res) => {
 });
 
 app.get("/balance/:addr", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const parts = req.params.addr.split(".");
     const address = parts[0];
@@ -364,6 +394,13 @@ app.get("/balance/:addr", (req, res) => {
 });
 
 app.get("/locked/:addr", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const parts = req.params.addr.split(".");
     const address = parts[0];
@@ -380,6 +417,13 @@ app.get("/locked/:addr", (req, res) => {
 });
 
 app.get("/balance-mempool/:addr", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const parts = req.params.addr.split(".");
     const address = parts[0];
@@ -396,6 +440,13 @@ app.get("/balance-mempool/:addr", (req, res) => {
 });
 
 app.get("/tokens/:addr", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const address = req.params.addr;
     if (!address) {
@@ -415,6 +466,13 @@ app.get("/tokens/:addr", (req, res) => {
 });
 
 app.get("/token-info/:token", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const tokenInfo = bc.mintedTokens.get(req.params.token);
     if (!tokenInfo) {
@@ -427,6 +485,13 @@ app.get("/token-info/:token", (req, res) => {
 });
 
 app.get("/token-count", (_, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     res.json({ count: bc.mintedTokens.size });
   } catch (error: any) {
@@ -435,6 +500,13 @@ app.get("/token-count", (_, res) => {
 });
 
 app.get("/token/:i", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const index = parseInt(req.params.i);
     if (isNaN(index) || index < 0 || index >= bc.mintedTokens.size) {
@@ -451,6 +523,13 @@ app.get("/token/:i", (req, res) => {
 });
 
 app.get("/history/:addr", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const addr = req.params.addr;
     if (!addr) {
@@ -518,6 +597,13 @@ app.get("/history/:addr", (req, res) => {
 });
 
 app.get("/search-blocks/:hash", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const hash = req.params.hash;
     if (!hash) {
@@ -538,6 +624,13 @@ app.get("/search-blocks/:hash", (req, res) => {
 });
 
 app.get("/search-tx/:query", (req, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node dissallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
   try {
     const query = req.params.query;
     if (!query) {
@@ -576,6 +669,40 @@ app.get("/search-tx/:query", (req, res) => {
     handleApiError(error, `GET /search-tx/${req.params.query}`, res);
   }
 });
+
+app.get("/rich", (_, res) => {
+  if (!allowIntensiveAPI) {
+    res.status(403).json({
+      error:
+        "This node disallows resource intensive API calls. Please host your own node.",
+    });
+    return;
+  }
+
+  try {
+    const top20: { address: string; balance: number }[] = [];
+
+    for (const [addr, balance] of bc.balances.entries()) {
+      if (addr.includes(".")) continue;
+
+      if (top20.length < 20) {
+        top20.push({ address: addr, balance });
+        top20.sort((a, b) => a.balance - b.balance); // keep smallest first
+      } else if (balance > top20[0].balance) {
+        top20[0] = { address: addr, balance };
+        top20.sort((a, b) => a.balance - b.balance);
+      }
+    }
+
+    // Sort descending before sending
+    top20.sort((a, b) => b.balance - a.balance);
+
+    res.json(top20);
+  } catch (error: any) {
+    handleApiError(error, `GET /rich`, res);
+  }
+});
+
 
 const httpPort = parseInt(process.env.HTTP_PORT ?? "8000");
 app.listen(httpPort, () => {

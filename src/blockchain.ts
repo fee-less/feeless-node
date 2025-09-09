@@ -27,9 +27,9 @@ class Blockchain {
   public height: number = 0;
   public lastBlock: string = "";
   public folder: string;
+  public balances: Map<string, number> = new Map(); // Track balances for each address
   private usedSignatures: string[] = [];
   private lastNonces: Map<string, number> = new Map(); // Track last nonce for each address
-  private balances: Map<string, number> = new Map(); // Track balances for each address
   private lockedBalances: {
     amount: number;
     unlock: number;
