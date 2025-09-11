@@ -13,3 +13,4 @@ dist/
 miner.json
 .env
 blockchain/
+chain_state.bin
