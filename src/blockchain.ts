@@ -1,3 +1,4 @@
+import v8 from "v8";
 import pkg from "elliptic";
 import fs from "fs";
 const { ec: EC } = pkg;
@@ -20,6 +21,26 @@ import { SplitTerminalUI } from "./ui.js";
 
 const ec = new EC("secp256k1");
 
+type Balances = Map<string, number>;
+
+type LockedBalances = {
+  amount: number;
+  unlock: number;
+  addr: string;
+  token?: string;
+}[];
+
+const CHAIN_STATE_VERSION = 1;
+
+type ChainState = {
+  balances: Balances;
+  lockedBalances: LockedBalances;
+  mintedTokens: MintedTokens;
+  height: number;
+  lastBlock: string;
+  version: number;
+};
+
 class Blockchain {
   public mempool: Transaction[] = [];
   public mintedTokens: MintedTokens = new Map(); // Track minted tokens and their mining rules
@@ -27,16 +48,11 @@ class Blockchain {
   public height: number = 0;
   public lastBlock: string = "";
   public folder: string;
-  public balances: Map<string, number> = new Map(); // Track balances for each address
+  public balances: Balances = new Map(); // Track balances for each address
   private usedSignatures: string[] = [];
   private lastNonces: Map<string, number> = new Map(); // Track last nonce for each address
-  private lockedBalances: {
-    amount: number;
-    unlock: number;
-    addr: string;
-    token?: string;
-  }[] = []; // Track balances for each address
-  private readonly MAX_USED_SIGNATURES = 10000; // Keep last 10k signatures
+  private lockedBalances: LockedBalances = []; // Track balances for each address
+  private readonly MAX_USED_SIGNATURES = 1000; // Keep last 1k signatures
   private _syncPromise: Promise<void> | null = null;
   private _syncResolve: (() => void) | null = null;
   private ui: SplitTerminalUI;
@@ -862,6 +878,7 @@ class Blockchain {
         }
       }
 
+      this.dumpChainState();
       if (!isBackchecking) {
         this.ui.logRight(
           `\x1b[32m[BLOCKCHAIN]\x1b[0m Block \x1b[36m${
@@ -927,10 +944,6 @@ class Blockchain {
 
   printStatus(): void {
     const status = this.getStatus();
-    const timestamp = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .substring(0, 19);
 
     this.ui.logLeft(`\x1b[36m[BLOCKCHAIN STATUS]\x1b[0m`);
     this.ui.logLeft(`  Height: \x1b[32m${status.height}\x1b[0m`);
@@ -946,6 +959,40 @@ class Blockchain {
     this.ui.logLeft(
       `  Signature Cache: \x1b[35m${status.usedSignatures}\x1b[0m/\x1b[36m${this.MAX_USED_SIGNATURES}\x1b[0m`
     );
+  }
+
+  dumpChainState() {
+    const chainState: ChainState = {
+      balances: this.balances,
+      lockedBalances: this.lockedBalances,
+      mintedTokens: this.mintedTokens,
+      height: this.height,
+      lastBlock: this.lastBlock,
+      version: CHAIN_STATE_VERSION
+    };
+
+    const chainStateBuf = v8.serialize(chainState);
+
+    fs.writeFileSync("chain_state.bin", chainStateBuf);
+  }
+
+  restoreChainState() {
+    const chainState: ChainState = v8.deserialize(
+      fs.readFileSync("chain_state.bin")
+    );
+    if (chainState.version !== CHAIN_STATE_VERSION) {
+      fs.rmSync("chain_state.bin");
+      this.ui.logLeft(
+        `\x1b[31m[NODE]\x1b[0m Outdated chain state version. You did not do anything wrong. Please re start your node, keeping in mind syncing will take long.`
+      );
+      this.ui.shutdown();
+      process.exit(0);
+    }
+    this.height = chainState.height;
+    this.balances = chainState.balances;
+    this.lockedBalances = chainState.lockedBalances;
+    this.mintedTokens = chainState.mintedTokens;
+    this.lastBlock = chainState.lastBlock;
   }
 }
 

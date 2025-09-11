@@ -28,6 +28,7 @@ class P2PNetwork {
     targetHeight: 0,
   };
   private lastSeenBlock = "";
+  private lastSeenTX = "";
   private lastSeenPush = "";
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
   private readonly HEARTBEAT_INTERVAL = 10000;
@@ -640,6 +641,9 @@ class P2PNetwork {
 
   incomingTX(tx: Transaction): boolean {
     try {
+      if (this.lastSeenTX === tx.signature) return false;
+      this.lastSeenTX = tx.signature;
+
       // Timestamp validation
       const now = Date.now();
       const txAge = now - tx.timestamp;
@@ -821,10 +825,6 @@ class P2PNetwork {
         `  Sync Progress: \x1b[36m${progress}%\x1b[0m (\x1b[32m${this.bc.height}\x1b[0m/\x1b[33m${this.syncState.targetHeight}\x1b[0m)`
       );
     }
-
-    this.ui.logLeft(
-      `\x1b[33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m\n`
-    );
   }
 }
 

@@ -41,6 +41,8 @@ app.use(cors());
 
 // --- Load local chain from disk ---
 function loadLocalBlocks() {
+  if (!process.argv.includes("--no-chain-state") && fs.existsSync("chain_state.bin")) return [];
+
   const blocks: Block[] = [];
   if (fs.existsSync("blockchain")) {
     const blockFiles = fs
@@ -107,6 +109,15 @@ function loadLocalBlocks() {
 ui.logLeft(`\x1b[36m[NODE]\x1b[0m Loading local blockchain...`);
 let blocks = loadLocalBlocks();
 let bc = new Blockchain(blocks, "blockchain", ui);
+if (blocks.length === 0) {
+  ui.logLeft("\x1b[36m[NODE]\x1b[0m Restoring saved local chain state...");
+
+  bc.restoreChainState();
+
+  ui.logLeft(
+    `\x1b[32m[NODE]\x1b[0m Restored local chain state successfully`
+  );
+}
 await bc.waitForSync();
 ui.logLeft(
   `\x1b[32m[NODE]\x1b[0m Local blockchain validated - Height: ${bc.height}`
@@ -173,6 +184,7 @@ if (process.env.PEER_HTTP) {
           console.error(
             `\x1b[31m[NODE]\x1b[0m Invalid response while syncing blocks ${start}-${end}`
           );
+          ui.shutdown();
           process.exit(1);
         }
 
@@ -203,6 +215,7 @@ if (process.env.PEER_HTTP) {
             ui.logRight(
               `\x1b[31m[NODE]\x1b[0m Sync failed - stopping synchronization`
             );
+            ui.shutdown();
             process.exit(1);
           }
 
@@ -702,7 +715,6 @@ app.get("/rich", (_, res) => {
     handleApiError(error, `GET /rich`, res);
   }
 });
-
 
 const httpPort = parseInt(process.env.HTTP_PORT ?? "8000");
 app.listen(httpPort, () => {
