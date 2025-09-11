@@ -344,7 +344,7 @@ class P2PNetwork {
       if (remoteHeight === null || remoteHeight <= this.bc.height) {
         if (remoteHeight !== null && remoteHeight < this.bc.height) {
           const push = this.bc.getSlice(
-            Math.max(this.bc.height - 15, 1),
+            Math.max(this.bc.height - 25, 1),
             this.bc.height
           );
           this.wscs.forEach((c) =>
@@ -525,7 +525,7 @@ class P2PNetwork {
             JSON.stringify(subChain)
           ).toString();
 
-          if (subChain.length > 15) {
+          if (subChain.length > 26) {
             this.ui.logLeft(
               `\x1b[31m[P2P]\x1b[0m Received pushed chain is too long (\x1b[33m${subChain.length}\x1b[0m blocks). Ignoring.`
             );
