@@ -40,8 +40,8 @@ const app = express();
 app.use(cors());
 
 // --- Load local chain from disk ---
-function loadLocalBlocks() {
-  if (!process.argv.includes("--no-chain-state") && fs.existsSync("chain_state.bin")) return [];
+function loadLocalBlocks(): Block[] | "no state" {
+  if (!process.argv.includes("--no-chain-state") && fs.existsSync("chain_state.bin")) return "no state";
 
   const blocks: Block[] = [];
   if (fs.existsSync("blockchain")) {
@@ -108,8 +108,8 @@ function loadLocalBlocks() {
 
 ui.logLeft(`\x1b[36m[NODE]\x1b[0m Loading local blockchain...`);
 let blocks = loadLocalBlocks();
-let bc = new Blockchain(blocks, "blockchain", ui);
-if (blocks.length === 0) {
+let bc = new Blockchain(blocks !== "no state" ? blocks : [], "blockchain", ui);
+if (blocks === "no state") {
   ui.logLeft("\x1b[36m[NODE]\x1b[0m Restoring saved local chain state...");
 
   bc.restoreChainState();
