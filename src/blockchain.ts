@@ -49,9 +49,9 @@ class Blockchain {
   public lastBlock: string = "";
   public folder: string;
   public balances: Balances = new Map(); // Track balances for each address
+  public lockedBalances: LockedBalances = []; // Track balances for each address
   private usedSignatures: string[] = [];
   private lastNonces: Map<string, number> = new Map(); // Track last nonce for each address
-  private lockedBalances: LockedBalances = []; // Track balances for each address
   private readonly MAX_USED_SIGNATURES = 1000; // Keep last 1k signatures
   private _syncPromise: Promise<void> | null = null;
   private _syncResolve: (() => void) | null = null;
@@ -968,7 +968,7 @@ class Blockchain {
       mintedTokens: this.mintedTokens,
       height: this.height,
       lastBlock: this.lastBlock,
-      version: CHAIN_STATE_VERSION
+      version: CHAIN_STATE_VERSION,
     };
 
     const chainStateBuf = v8.serialize(chainState);

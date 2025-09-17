@@ -32,7 +32,6 @@ class P2PNetwork {
   private lastSeenPush = "";
   private readonly MAX_RECONNECT_ATTEMPTS = 3;
   private readonly HEARTBEAT_INTERVAL = 10000;
-  private readonly WATCHDOG_INTERVAL = 20000;
   private readonly RECONNECT_DELAY = 10000;
   private rl?: readline.Interface;
   private isShuttingDown = false;
@@ -55,7 +54,6 @@ class P2PNetwork {
     this.initializeWebSocketServer();
     this.setupProcessHandlers();
     this.setupKeyboardListener();
-    setInterval(this.watchDog.bind(this), this.WATCHDOG_INTERVAL);
 
     this.ui.logLeft(
       `\x1b[36m[P2P]\x1b[0m Network initialized on port \x1b[33m${port}\x1b[0m`
@@ -161,11 +159,25 @@ class P2PNetwork {
       ws.on("error", (err) => {
         this.ui.logRight(`[P2P] WebSocket client error: ${err.message}`);
       });
+
+      ws.on("ping", (data) => {
+        try {
+          const remoteHeight = parseInt(data.toString());
+
+          this.onPing(ws, remoteHeight);
+        } catch (e: any) {
+          this.ui.logLeft("[P2P] ping failed!", e);
+        }
+      });
     });
 
     this.wss.on("error", (err) => {
       this.ui.logRight(`[P2P] WebSocket server error: ${err.message}`);
     });
+
+    setInterval(() => {
+      this.wss.clients.forEach(c => c.ping(this.bc.height));
+    }, this.HEARTBEAT_INTERVAL);
   }
 
   private createPeerSocket(peerUrl: string): WebSocket | null {
@@ -231,6 +243,16 @@ class P2PNetwork {
         }
       });
 
+      ws.on("ping", (data) => {
+        try {
+          const remoteHeight = parseInt(data.toString());
+
+          this.onPing(ws, remoteHeight);
+        } catch (e: any) {
+          this.ui.logLeft("[P2P] ping failed!", e);
+        }
+      });
+
       return ws;
     } catch (error: any) {
       if (!this.silencedPeers.has(peerUrl)) {
@@ -242,12 +264,35 @@ class P2PNetwork {
     }
   }
 
+  private onPing(ws: WebSocket, remoteHeight: number) {
+    if (remoteHeight === null || remoteHeight <= this.bc.height) {
+      if (remoteHeight !== null && remoteHeight < this.bc.height) {
+        const push = {
+          blocks: this.bc.getSlice(
+            Math.max(this.bc.height - 25, 1),
+            this.bc.height
+          ),
+          mempool: this.bc.mempool,
+        };
+        ws.send(
+          JSON.stringify({
+            event: "push",
+            data: push,
+          })
+        );
+        this.lastSeenPush = CryptoJS.SHA256(JSON.stringify(push)).toString();
+        this.ui.logLeft("\x1b[36m[SYNC]\x1b[0m Pushing peer to longest chain");
+      }
+      return;
+    }
+  }
+
   private startHeartbeat(ws: WebSocket, peerUrl: string): void {
     let isAlive = true;
     let missedPings = 0;
     const MAX_MISSED_PINGS = 3;
 
-    ws.on("pong", () => {
+    ws.on("pong", (e) => {
       isAlive = true;
       missedPings = 0;
     });
@@ -270,7 +315,7 @@ class P2PNetwork {
       isAlive = false;
       try {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.ping();
+          ws.ping(this.bc.height);
         }
       } catch (err: any) {
         if (!this.silencedPeers.has(peerUrl)) {
@@ -334,141 +379,6 @@ class P2PNetwork {
     this.peerReconnectTimeouts.set(peerUrl, timeout);
   }
 
-  private async watchDog(): Promise<void> {
-    if (!process.env.PEER_HTTP || this.syncState.isActive) {
-      return;
-    }
-
-    try {
-      const remoteHeight = await this.fetchRemoteHeight();
-      if (remoteHeight === null || remoteHeight <= this.bc.height) {
-        if (remoteHeight !== null && remoteHeight < this.bc.height) {
-          const push = this.bc.getSlice(
-            Math.max(this.bc.height - 25, 1),
-            this.bc.height
-          );
-          this.wscs.forEach((c) =>
-            c.send(
-              JSON.stringify({
-                event: "push",
-                data: push,
-              })
-            )
-          );
-          this.lastSeenPush = CryptoJS.SHA256(JSON.stringify(push)).toString();
-          this.ui.logLeft(
-            "\x1b[36m[SYNC]\x1b[0m Pushing peer to longest chain"
-          );
-        }
-        return;
-      }
-
-      await this.sync();
-    } catch (error: any) {
-      this.ui.logRight(`[SYNC] Watchdog failed: ${error.message}`);
-    }
-  }
-
-  private async sync() {
-    const remote = await this.fetchRemoteHeight();
-    if (!remote || remote <= this.bc.height || this.syncState.isActive) return;
-    this.syncState.isActive = true;
-    this.syncState.targetHeight = remote;
-    try {
-      this.ui.logLeft("\x1b[36m[SYNC]\x1b[0m Syncing to longer chain...");
-      let fork = 0;
-      for (let i = this.bc.height - 1; i >= 0; i--) {
-        if (
-          (await this.fetchRemoteBlock(i))!.hash === this.bc.getBlock(i).hash
-        ) {
-          fork = i + 1;
-          break;
-        }
-      }
-      this.syncState.startHeight = fork;
-      this.ui.logLeft(
-        `\x1b[36m[SYNC]\x1b[0m Orphaning \x1b[31m${
-          this.bc.height - fork + 1
-        }\x1b[0m block${this.bc.height - fork + 1 === 1 ? "" : "s"}`
-      );
-
-      this.bc.height = fork; // first invalid
-      this.bc.lastBlock = this.bc.getBlock(fork - 1).hash;
-
-      this.bc.mempool = [];
-
-      for (let i = fork; i < remote; i++) {
-        const block = await this.fetchRemoteBlock(i);
-        if (!block) throw new Error();
-        block.transactions.forEach((tx) => this.bc.pushTX(tx));
-        if (!(await this.bc.addBlock(block, true))) throw new Error();
-        fs.writeFileSync("blockchain/" + i, JSON.stringify(block));
-        this.ui.logLeft(
-          `\x1b[36m[SYNC]\x1b[0m Restoring longest chain \x1b[32m${
-            i + (remote - fork)
-          }\x1b[0m/\x1b[33m${remote - fork}\x1b[0m`,
-          true
-        );
-      }
-
-      (await this.fetchRemoteMempool()).forEach((tx) => this.bc.pushTX(tx));
-
-      this.ui.logLeft(
-        "\x1b[32m[SYNC]\x1b[0m Chain up to date with longest chain known."
-      );
-      this.syncState.isActive = false;
-    } catch (e) {
-      this.ui.logLeft("\x1b[31m[SYNC]\x1b[0m Error syncing longer chain");
-      this.syncState.isActive = false;
-    }
-  }
-
-  private async fetchRemoteHeight(): Promise<number | null> {
-    try {
-      const response = await fetch(`${process.env.PEER_HTTP}/height`);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      const data = await response.json();
-      return data.height;
-    } catch (error: any) {
-      this.ui.logRight(
-        `\x1b[31m[SYNC]\x1b[0m Failed to fetch remote height: ${error.message}`
-      );
-      return null;
-    }
-  }
-
-  private async fetchRemoteBlock(height: number): Promise<Block | null> {
-    try {
-      const response = await fetch(`${process.env.PEER_HTTP}/block/${height}`);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      return await response.json();
-    } catch (error: any) {
-      this.ui.logRight(
-        `\x1b[31m[SYNC]\x1b[0m Failed to fetch block \x1b[33m${height}\x1b[0m: ${error.message}`
-      );
-      return null;
-    }
-  }
-
-  private async fetchRemoteMempool(): Promise<Transaction[]> {
-    try {
-      const response = await fetch(`${process.env.PEER_HTTP}/mempool`);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      return await response.json();
-    } catch (error: any) {
-      this.ui.logRight(
-        `\x1b[31m[SYNC]\x1b[0m Failed to fetch remote mempool: ${error.message}`
-      );
-      return [];
-    }
-  }
-
   private async persistBlock(block: Block, height: number): Promise<void> {
     try {
       if (!fs.existsSync("blockchain")) {
@@ -513,7 +423,8 @@ class P2PNetwork {
           break;
 
         case "push":
-          const subChain = payload.data as Block[];
+          const push = payload.data;
+          const subChain = push.blocks as Block[];
           if (
             CryptoJS.SHA256(JSON.stringify(subChain)).toString() ===
               this.lastSeenPush ||
@@ -542,10 +453,53 @@ class P2PNetwork {
                   i + 1
                 }\x1b[0m...`
               );
+
+              for (let j = this.bc.height - 1; j > i; j--) {
+                const block = this.bc.getBlock(j);
+                block.transactions.forEach((tx) => {
+                  const senderKey =
+                    tx.sender + (tx.token ? "." + tx.token : "");
+                  const receiverKey =
+                    tx.receiver + (tx.token ? "." + tx.token : "");
+
+                  if (tx.unlock) {
+                    // Restore sender balance
+                    const senderBalance = this.bc.balances.get(senderKey) || 0;
+                    this.bc.balances.set(senderKey, senderBalance + tx.amount);
+
+                    // Remove from locked balances
+                    this.bc.lockedBalances = this.bc.lockedBalances.filter(
+                      (lb) =>
+                        !(
+                          lb.addr === tx.receiver &&
+                          lb.amount === tx.amount &&
+                          lb.token === tx.token
+                        )
+                    );
+                  } else {
+                    // Restore sender balance and reduce receiver balance
+                    const senderBalance = this.bc.balances.get(senderKey) || 0;
+                    const receiverBalance =
+                      this.bc.balances.get(receiverKey) || 0;
+
+                    this.bc.balances.set(senderKey, senderBalance + tx.amount);
+                    this.bc.balances.set(
+                      receiverKey,
+                      receiverBalance - tx.amount
+                    );
+
+                    if (receiverBalance - tx.amount === 0) {
+                      this.bc.balances.delete(receiverKey);
+                    }
+                  }
+                });
+              }
+
               const sh = this.bc.height;
               const slb = this.bc.lastBlock;
               this.bc.height = i + 1;
               this.bc.lastBlock = this.bc.getBlock(i).hash;
+              this.bc.mempool = [];
 
               let _i = this.bc.height;
               for (const b of subChain) {
@@ -566,7 +520,14 @@ class P2PNetwork {
                 }
               }
 
-              this.toPeers(payload);
+              this.bc.mempool = [];
+
+              push.mempool.forEach((tx: Transaction) => this.bc.pushTX(tx));
+
+              this.toPeers({
+                event: "push",
+                data: { blocks: push.blocks, mempool: this.bc.mempool },
+              });
               this.ui.logLeft(
                 `\x1b[32m[P2P]\x1b[0m Successfully replaced local chain with pushed chain from block \x1b[33m${
                   i + 1
